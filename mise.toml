@@ -3,3 +3,19 @@ python = "latest"
 ruff = "latest"
 uv = "latest"
 ty = "latest"
+
+[tasks]
+# Command: `mise run dev` (Runs normally)
+dev = "uv run main.py"
+
+# Command: `mise run watch` (HOT RELOAD / Auto-Restart mode)
+watch = "uv run watchfiles 'uv run main.py' ."
+
+# Command: `mise run build`
+build = "uv run pyinstaller --windowed --name 'RefViewer' main.py"
+
+# Command: `mise run build:one`
+"build:one" = "uv run pyinstaller --windowed --onefile --name 'RefViewer' main.py"
+
+# Command: `mise run clean` -> Deletes build artifacts
+clean = "rm -rf build/ dist/ *.spec .venv/ .ruff_cache/ __pycache__/"

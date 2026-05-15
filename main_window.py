@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QFrame,
     QApplication,
+    QProgressBar
 )
 from PyQt6.QtGui import QPixmap, QPainter, QIntValidator, QColor, QIcon, QPen, QImageReader
 from PyQt6.QtCore import Qt, QTimer, QSize
@@ -34,7 +35,7 @@ class MainWindow(QWidget):
         self.active_image_path = None
         self.scanned_files = []
         self.active_filter_tag = None
-        self.is_icon_view = False
+        self.is_icon_view = True
         self.thumb_loader = None
         self.time_left = 0
         self.timer_interval = 0
@@ -62,18 +63,22 @@ class MainWindow(QWidget):
         sidebar = QFrame()
         sidebar.setStyleSheet(STYLES["sidebar"])
         sidebar.setFixedWidth(300)
-
+        
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
 
-        top_row = QHBoxLayout()
-        top_row.setContentsMargins(0, 0, 0, 0)
-
+        # ROW 1: Path Display (Full Width)
         self.path_display = QLineEdit()
         self.path_display.setPlaceholderText("No folder selected")
         self.path_display.setReadOnly(True)
         self.path_display.setStyleSheet(STYLES["input"])
+        layout.addWidget(self.path_display)
+
+        # ROW 2: Action Buttons
+        buttons_row = QHBoxLayout()
+        buttons_row.setContentsMargins(0, 0, 0, 0)
+        buttons_row.setSpacing(5)
 
         btn_browse = QPushButton("Browse")
         btn_browse.setStyleSheet(STYLES["button"])
@@ -83,15 +88,26 @@ class MainWindow(QWidget):
         btn_toggle.setStyleSheet(STYLES["button"])
         btn_toggle.clicked.connect(self.toggle_view_mode)
 
-        top_row.addWidget(self.path_display)
-        top_row.addWidget(btn_browse)
-        top_row.addWidget(btn_toggle)
-        layout.addLayout(top_row)
+        buttons_row.addWidget(btn_browse)
+        buttons_row.addWidget(btn_toggle)
+        layout.addLayout(buttons_row)
 
+        # ROW 3: File Data List
         self.file_list_widget = QListWidget()
         self.file_list_widget.setStyleSheet(STYLES["list"])
         self.file_list_widget.currentItemChanged.connect(self.on_file_item_changed)
         layout.addWidget(self.file_list_widget)
+
+        # ROW 4: Thumbnail Loading Progress Bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(8)  # Slim and unobtrusive
+        self.progress_bar.setTextVisible(False)  # Hide the percentage text
+        self.progress_bar.setStyleSheet("""
+            QProgressBar { border: 1px solid #34495e; border-radius: 4px; background-color: #1a252f; }
+            QProgressBar::chunk { background-color: #2980b9; border-radius: 3px; }
+        """)
+        self.progress_bar.hide()  # Hidden by default
+        layout.addWidget(self.progress_bar)
 
         return sidebar
 
@@ -284,11 +300,26 @@ class MainWindow(QWidget):
                 items_for_worker.append((row, file_path, is_external))
 
         if self.is_icon_view and items_for_worker:
+            # 1. Setup the Progress Bar
+            self.loaded_thumbnail_count = 0
+            self.progress_bar.setMaximum(len(items_for_worker))
+            self.progress_bar.setValue(0)
+            self.progress_bar.show()
+
+            # 2. Start the Thread
             self.thumb_loader = ThumbnailLoader(items_for_worker, str(CACHE_DIR))
             self.thumb_loader.thumbnail_ready.connect(self.on_thumbnail_ready)
+            # Hide the bar automatically when the thread is completely finished wrapping up
+            self.thumb_loader.finished.connect(self.progress_bar.hide) 
             self.thumb_loader.start()
+        else:
+            self.progress_bar.hide()
 
     def on_thumbnail_ready(self, row, file_path, img, is_external):
+              # Tick the progress bar forward purely for visual feedback
+        self.loaded_thumbnail_count += 1
+        self.progress_bar.setValue(self.loaded_thumbnail_count)
+
         item = self.file_list_widget.item(row)
         if not item or item.data(Qt.ItemDataRole.UserRole) != file_path:
             return

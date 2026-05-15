@@ -2,7 +2,7 @@
 **READ THIS BEFORE USING OR EXPECTING ANYTHING FROM THIS SOFTWARE:**
 
 1. **This project is 100% vibe coded.** The architecture was manifested into existence.
-2. **It is only tested on Linux on a single machine configuration.** It might work on Windows or macOS, but I make absolutely zero promises. 
+2. **It is only tested on Linux on a single machine configuration.** It should theoretically work on Windows and macOS now due to cross-platform paths, but I make absolutely zero promises. 
 3. **I will barely update this.** Do not expect active maintenance, feature requests, or bug fixes. Fork it if you want to change it.
 
 ---
@@ -13,50 +13,57 @@ RefViewer is a fast, local desktop image viewer and reference gallery tool built
 
 ## Features
 
-- **Global Tagging System:** Quickly add, remove, and manage tags in a persistent SQLite database. Tags are linked to absolute file paths.
+- **Global Tagging System:** Quickly add, remove, and manage tags using quick-toggle `+`/`-` buttons. Tags persist in an SQLite database and are linked to absolute file paths.
 - **Cross-Folder Filtering:** Click a tag to instantly see all images associated with that tag, even if they live outside your currently selected folder (outlined in yellow).
-- **Toggleable Gallery View:** Switch between a dense list view and an icon thumbnail grid.
-- **Blazing Fast Thumbnails:** Multi-threaded thumbnail generation that runs in the background and caches to the disk so large directories load instantly.
+- **Blazing Fast, Uncapped Rendering:** Multi-threaded background thumbnail generation. Image decoding allocation limits are completely disabled to support massive, high-res canvas files without crashing.
+- **EXIF Aware:** Automatically reads EXIF metadata to ensure phone/camera photos aren't rotated sideways.
 - **Speed Drawing Timer:** A configurable countdown timer that loops and randomly selects a *new* image when it hits zero—perfect for gesture drawing or art practice. 
+- **Hot-Reloading:** Built-in `watchfiles` support for instant UI restarts on file save during development.
 
-## Requirements
+## Setup & Development (Using `uv` & `mise`)
 
-- Python 3.10+ (Recommended)
-- `PyQt6`
-
-## Installation & Setup
+This project uses modern Python tooling. You will need [uv](https://github.com/astral-sh/uv) and [mise](https://github.com/jdx/mise) installed on your system.
 
 1. Clone or download this repository.
-2. Install the required dependencies:
+2. Install dependencies (creates `.venv` automatically):
    ```bash
-   pip install PyQt6
-   ```
-3. Run the application:
-   ```bash
-   python main.py
-   ```
+   uv sync
 
-## Where is my data saved?
+    Use the built-in task runner to start the app:
 
-RefViewer stores its configuration, database, and thumbnail cache locally in your user directories:
-- **Database:** `~/.config/refviewer/data.db`
-- **Thumbnail Cache:** `~/.cache/refviewer/.thumbnail_cache/`
+    mise run dev
 
-## Project Structure
+Available Tasks (mise.toml)
 
-```text
+    mise run dev — Runs the application normally.
+    mise run watch — Runs the app in Auto-Restart mode. Saving any .py file instantly reloads the app.
+    mise run build — Compiles the app into a standalone cross-platform executable directory (using PyInstaller).
+    mise run build:one — Compiles the app into a single standalone binary file.
+    mise run clean — Wipes compiler cache, build artifacts, and virtual environments.
+
+Where is my data saved?
+
+RefViewer dynamically checks your Operating System and stores the SQLite database and Thumbnail Caches in secure, native app-data directories:
+
+    Windows: C:\Users\<User>\AppData\Roaming\RefViewer\
+    macOS: ~/Library/Application Support/RefViewer/
+    Linux: ~/.config/RefViewer/
+
+To clear out old sideways images or broken thumbnails, simply delete your OS thumbnails cache folder located in these directories.
+Project Structure
+
 refviewer/
  ┣ components/
  ┃ ┣ __init__.py
- ┃ ┣ image_viewer.py        # Central canvas rendering
- ┃ ┗ thumbnail_loader.py    # Multi-threaded cache/loading logic
- ┣ config.py                # UI Styling and filepath constants
- ┣ database.py              # SQLite3 data management
+ ┃ ┣ image_viewer.py        # Central canvas rendering, handles EXIF & limits
+ ┃ ┗ thumbnail_loader.py    # Multi-threaded concurrent cache generation
+ ┣ config.py                # UI Styling and dynamic cross-platform paths
+ ┣ database.py              # SQLite3 data management & tag schema
  ┣ file_scanner.py          # OS walking and file discovery
- ┣ main_window.py           # Core GUI logic and signals
- ┗ main.py                  # Entry point
-```
+ ┣ main_window.py           # Core GUI layouts, signals, and routing
+ ┣ main.py                  # Standard app entry point
+ ┗ mise.toml                # Task runner commands (npm run style)
 
-## License
+License
 
 Do whatever you want with this codebase.

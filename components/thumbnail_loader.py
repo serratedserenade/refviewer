@@ -44,7 +44,9 @@ class ThumbnailLoader(QThread):
         return row, file_path, img, is_ext
 
     def run(self):
-        with ThreadPoolExecutor() as executor:
+        safe_workers = max(1, (os.cpu_count() or 2) // 2)
+
+        with ThreadPoolExecutor(max_workers=safe_workers) as executor:
             futures = {
                 executor.submit(self.process_image, row, fp, is_ext): (row, fp, is_ext)
                 for row, fp, is_ext in self.items_to_load
