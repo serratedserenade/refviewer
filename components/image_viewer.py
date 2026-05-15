@@ -35,14 +35,17 @@ class ScaledImageLabel(QLabel):
 
 
 class CanvasLoader(QThread):
+    """Loads massive high-res canvases in the background to prevent UI lag."""
+
     image_ready = pyqtSignal(str, QImage)
 
-    def __init__(self, file_path):
-        super().__init__()
+    def __init__(self, file_path, parent=None):
+        super().__init__(parent)
         self.file_path = file_path
-        self._cancelled = False  # ← Add cancellation flag
+        self._cancelled = False
 
     def cancel(self):
+        """Cooperatively signal this loader to discard its result."""
         self._cancelled = True
 
     def run(self):

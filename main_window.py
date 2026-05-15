@@ -50,6 +50,7 @@ class MainWindow(QWidget):
         self.timer_interval = 0
         self.show_labels = False
         self.thumb_generation = 0
+        self._canvas_loaders = []
 
         self.path_filter_timer = QTimer(self)
         self.path_filter_timer.setSingleShot(True)
@@ -300,9 +301,14 @@ class MainWindow(QWidget):
         self.update_file_list()
 
     def update_file_list(self):
+        # 1. Kill any running loader
         if self.thumb_loader and self.thumb_loader.isRunning():
             self.thumb_loader.stop()
             self.thumb_loader.wait()
+
+        # 2. Always hide the progress bar at the start of a rebuild
+        self.progress_bar.hide()
+        self.progress_bar.setValue(0)
 
         self.file_list_widget.clear()
 
@@ -393,9 +399,15 @@ class MainWindow(QWidget):
                 )
             )
 
-            self.thumb_loader.finished.connect(self.progress_bar.hide)
+            self.thumb_loader.finished.connect(self._on_thumbnail_loading_finished)
             self.thumb_loader.start()
         else:
+            self.progress_bar.hide()
+
+    def _on_thumbnail_loading_finished(self):
+        """Only hide the bar if this signal is from the CURRENT loader."""
+        sender = self.sender()
+        if sender is self.thumb_loader:
             self.progress_bar.hide()
 
     def on_thumbnail_ready(self, row, file_path, img, is_external, generation):
@@ -436,14 +448,25 @@ class MainWindow(QWidget):
         self.active_image_path = current.data(Qt.ItemDataRole.UserRole)
         self.refresh_assigned_bubbles()
 
-        # Cancel the previous loader cooperatively
-        if hasattr(self, "canvas_loader") and self.canvas_loader.isRunning():
-            self.canvas_loader.cancel()
-            # Don't wait — let it finish silently in the background
+        # 1. Cancel all previous loaders (they'll silently discard their results)
+        for loader in self._canvas_loaders:
+            loader.cancel()
 
-        self.canvas_loader = CanvasLoader(self.active_image_path)
-        self.canvas_loader.image_ready.connect(self.on_canvas_image_ready)
-        self.canvas_loader.start()
+        # 2. Purge any loaders that have already finished
+        #    (safe to let Python GC collect these — their thread is done)
+        self._canvas_loaders = [l for l in self._canvas_loaders if l.isRunning()]
+
+        # 3. Spawn the new loader and keep a strong reference to it
+        loader = CanvasLoader(self.active_image_path, parent=None)
+        loader.image_ready.connect(self.on_canvas_image_ready)
+        loader.finished.connect(lambda l=loader: self._cleanup_loader(l))
+        loader.start()
+        self._canvas_loaders.append(loader)
+
+    def _cleanup_loader(self, loader):
+        """Remove a finished loader from the reference list so it can be garbage collected."""
+        if loader in self._canvas_loaders:
+            self._canvas_loaders.remove(loader)
 
     def on_canvas_image_ready(self, requested_path, img):
         # Prevent race conditions if the user clicked 5 images rapidly
@@ -724,14 +747,19 @@ class MainWindow(QWidget):
         self.pick_random_image()
 
     def closeEvent(self, event):
+        """Ensure all background threads are stopped before the window is destroyed."""
         self.countdown_timer.stop()
 
+        # Stop thumbnail generation
         if self.thumb_loader and self.thumb_loader.isRunning():
             self.thumb_loader.stop()
             self.thumb_loader.wait()
 
-        if hasattr(self, "canvas_loader") and self.canvas_loader.isRunning():
-            self.canvas_loader.cancel()
-            self.canvas_loader.wait(2000)  # Wait up to 2 seconds then give up
+        # Cancel and wait for all canvas loaders
+        for loader in self._canvas_loaders:
+            loader.cancel()
+        for loader in self._canvas_loaders:
+            loader.wait(2000)  # Wait up to 2 seconds per loader
 
+        self._canvas_loaders.clear()
         event.accept()
