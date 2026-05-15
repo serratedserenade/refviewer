@@ -527,19 +527,17 @@ class MainWindow(QWidget):
             self.update_file_list()
 
     def on_tag_item_clicked(self, item):
-        if not self.active_image_path:
-            return
+        # 1. Grab the clean tag name we safely tucked away in the UserRole
+        tag_name = item.data(Qt.ItemDataRole.UserRole)
 
-        match = re.match(r"^(.*)\s\(\d+\)$", item.text())
-        tag_name = match.group(1).strip() if match else item.text().strip()
-
-        if tag_name in database.get_image_tags(self.active_image_path):
-            database.remove_tag_from_image(self.active_image_path, tag_name)
+        # 2. Toggle the filter state (click once to filter, click again to turn it off)
+        if self.active_filter_tag == tag_name:
+            self.active_filter_tag = None
+            self.tag_list_widget.clearSelection()
         else:
-            database.add_tag_to_image(self.active_image_path, tag_name)
+            self.active_filter_tag = tag_name
 
-        self.refresh_global_tags()
-        self.refresh_assigned_bubbles()
+        # 3. Trigger the UI to refresh the image grid based on the new filter
         self.update_file_list()
 
     def _parse_tag_name(self, formatted_text: str) -> str:
