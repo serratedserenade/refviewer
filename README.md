@@ -29,9 +29,8 @@ This project uses modern Python tooling. You will need [uv](https://github.com/a
 1. Clone or download this repository.
 2. Install dependencies (creates `.venv` automatically):
    ```bash
-   uv sync
-
-    Use the built-in task runner to start the app:
+    uv sync
+Use the built-in task runner to start the app:
 
     mise run dev
 
@@ -43,7 +42,7 @@ Available Tasks (mise.toml)
     mise run build:one — Compiles the app into a single standalone binary file.
     mise run clean — Wipes compiler cache, build artifacts, and virtual environments.
 
-Where is my data saved?
+### Where is my data saved?
 
 RefViewer dynamically checks your Operating System and stores the SQLite database and Thumbnail Caches in secure, native app-data directories:
 
@@ -66,6 +65,6 @@ refviewer/
  ┣ main.py                  # Standard app entry point
  ┗ mise.toml                # Task runner commands (npm run style)
 
-License
+# License
 
 Do whatever you want with this codebase.
