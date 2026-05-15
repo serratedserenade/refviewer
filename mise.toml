@@ -17,5 +17,36 @@ build = "uv run pyinstaller --windowed --name 'RefViewer' main.py"
 # Command: `mise run build:one`
 "build:one" = "uv run pyinstaller --windowed --onefile --name 'RefViewer' main.py"
 
-# Command: `mise run clean` -> Deletes build artifacts
-clean = "rm -rf build/ dist/ *.spec .venv/ .ruff_cache/ __pycache__/"
+
+# =========================================================
+# PLATFORM SPECIFIC BUILDS & MD5 HASHING
+# =========================================================
+
+[tasks."build:plat:linux"]
+description = "Compiles the Linux binary and generates an MD5 checksum"
+run = [
+    "uv run pyinstaller --windowed --onefile --name 'RefViewer-Linux' main.py",
+    "uv run python -c \"import hashlib; data=open('dist/RefViewer-Linux','rb').read(); open('dist/RefViewer-Linux.md5','w').write(hashlib.md5(data).hexdigest() + '  RefViewer-Linux\\n')\""
+]
+
+[tasks."build:plat:mac"]
+description = "Compiles the macOS .app and generates an MD5 checksum"
+run = [
+    "uv run pyinstaller --windowed --onefile --name 'RefViewer-Mac' main.py",
+    # Note: On Mac, PyInstaller creates both a UNIX executable and a .app folder. We hash the executable.
+    "uv run python -c \"import hashlib; data=open('dist/RefViewer-Mac','rb').read(); open('dist/RefViewer-Mac.md5','w').write(hashlib.md5(data).hexdigest() + '  RefViewer-Mac\\n')\""
+]
+
+[tasks."build:plat:win"]
+description = "Compiles the Windows .exe and generates an MD5 checksum"
+run = [
+    "uv run pyinstaller --windowed --onefile --name 'RefViewer-Windows' main.py",
+    "uv run python -c \"import hashlib; data=open('dist/RefViewer-Windows.exe','rb').read(); open('dist/RefViewer-Windows.exe.md5','w').write(hashlib.md5(data).hexdigest() + '  RefViewer-Windows.exe\\n')\""
+]
+
+# =========================================================
+
+
+[tasks.clean]
+description = "Wipes compiler cache and build artifacts"
+run = "rm -rf build/ dist/ *.spec .venv/ .ruff_cache/ __pycache__/"
