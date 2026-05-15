@@ -2,8 +2,17 @@ import sys
 import re
 import random
 from PyQt6.QtWidgets import (
-    QWidget, QLabel, QHBoxLayout, QVBoxLayout, QLineEdit, QPushButton, 
-    QListWidget, QFileDialog, QListWidgetItem, QFrame, QApplication
+    QWidget,
+    QLabel,
+    QHBoxLayout,
+    QVBoxLayout,
+    QLineEdit,
+    QPushButton,
+    QListWidget,
+    QFileDialog,
+    QListWidgetItem,
+    QFrame,
+    QApplication,
 )
 from PyQt6.QtGui import QPixmap, QPainter, QIntValidator, QColor, QIcon, QPen
 from PyQt6.QtCore import Qt, QTimer, QSize
@@ -13,6 +22,7 @@ from file_scanner import scan_directory
 from components.image_viewer import ScaledImageLabel
 from components.thumbnail_loader import ThumbnailLoader
 import database
+
 
 class MainWindow(QWidget):
     def __init__(self):
@@ -28,12 +38,12 @@ class MainWindow(QWidget):
         self.thumb_loader = None
         self.time_left = 0
         self.timer_interval = 0
-        
+
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
         self._build_ui()
         self._setup_timer()
-        
+
         self.load_saved_folder()
         self.refresh_global_tags()
 
@@ -52,7 +62,7 @@ class MainWindow(QWidget):
         sidebar = QFrame()
         sidebar.setStyleSheet(STYLES["sidebar"])
         sidebar.setFixedWidth(300)
-        
+
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
@@ -88,13 +98,15 @@ class MainWindow(QWidget):
     def _create_center_canvas(self):
         content_area = QFrame()
         content_area.setStyleSheet(STYLES["content"])
-        
+
         layout = QVBoxLayout(content_area)
         layout.setContentsMargins(15, 15, 15, 15)
 
         self.timer_display = QLabel("")
         self.timer_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.timer_display.setStyleSheet("color: red; font-size: 14px; background-color: #000000; font-weight: bold;")
+        self.timer_display.setStyleSheet(
+            "color: red; font-size: 14px; background-color: #000000; font-weight: bold;"
+        )
         self.timer_display.hide()
         layout.addWidget(self.timer_display)
 
@@ -110,9 +122,9 @@ class MainWindow(QWidget):
         self.bubble_layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.bubble_container)
 
-        layout.setStretch(0, 0)  
-        layout.setStretch(1, 1)  
-        layout.setStretch(2, 0)  
+        layout.setStretch(0, 0)
+        layout.setStretch(1, 1)
+        layout.setStretch(2, 0)
 
         return content_area
 
@@ -120,7 +132,7 @@ class MainWindow(QWidget):
         sidebar = QFrame()
         sidebar.setStyleSheet(STYLES["right_sidebar"])
         sidebar.setFixedWidth(250)
-        
+
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(10, 10, 10, 10)
 
@@ -130,14 +142,14 @@ class MainWindow(QWidget):
         self.timer_input = QLineEdit()
         self.timer_input.setValidator(QIntValidator(1, 99999, self))
         self.timer_input.setStyleSheet(STYLES["input"])
-        
+
         if saved_timer := database.get_setting("timer_seconds"):
             self.timer_input.setText(saved_timer)
 
         btn_go = QPushButton("Go")
         btn_go.setStyleSheet(STYLES["button"])
         btn_go.clicked.connect(self.start_timer)
-        
+
         btn_stop = QPushButton("Stop")
         btn_stop.setStyleSheet(STYLES["button"])
         btn_stop.clicked.connect(self.stop_timer)
@@ -166,11 +178,15 @@ class MainWindow(QWidget):
         layout.addLayout(tag_row)
 
         # Tag List
-        layout.addWidget(self._create_styled_label("All Database Tags\n(Click to Filter, Double-click to Assign):"))
+        layout.addWidget(
+            self._create_styled_label(
+                "All Database Tags\n(Click to Filter, Double-click to Assign):"
+            )
+        )
         self.tag_list_widget = QListWidget()
         self.tag_list_widget.setStyleSheet(STYLES["list"])
         self.tag_list_widget.itemClicked.connect(self.on_tag_filter_clicked)
-        self.tag_list_widget.itemDoubleClicked.connect(self.on_tag_item_clicked)
+
         layout.addWidget(self.tag_list_widget)
 
         return sidebar
@@ -192,7 +208,9 @@ class MainWindow(QWidget):
             self.perform_scan(past_path)
 
     def select_folder(self):
-        if folder_path := QFileDialog.getExistingDirectory(self, "Select Image Directory"):
+        if folder_path := QFileDialog.getExistingDirectory(
+            self, "Select Image Directory"
+        ):
             self.path_display.setText(folder_path)
             database.save_setting("last_folder", folder_path)
             self.perform_scan(folder_path)
@@ -230,7 +248,7 @@ class MainWindow(QWidget):
             self.thumb_loader.wait()
 
         self.file_list_widget.clear()
-        
+
         if self.is_icon_view:
             self.file_list_widget.setViewMode(QListWidget.ViewMode.IconMode)
             self.file_list_widget.setIconSize(QSize(100, 100))
@@ -243,21 +261,25 @@ class MainWindow(QWidget):
             self.file_list_widget.setGridSize(QSize())
             self.file_list_widget.setSpacing(0)
             self.file_list_widget.setWordWrap(False)
-            
-        display_files = database.get_images_by_tag(self.active_filter_tag) if self.active_filter_tag else self.scanned_files
-            
+
+        display_files = (
+            database.get_images_by_tag(self.active_filter_tag)
+            if self.active_filter_tag
+            else self.scanned_files
+        )
+
         items_for_worker = []
         for row, file_path in enumerate(display_files):
             is_external = file_path not in self.scanned_files
-            
+
             item = QListWidgetItem(file_path)
-            item.setData(Qt.ItemDataRole.UserRole, file_path) 
-            
+            item.setData(Qt.ItemDataRole.UserRole, file_path)
+
             if not self.is_icon_view and is_external:
                 item.setForeground(QColor("yellow"))
-                
+
             self.file_list_widget.addItem(item)
-            
+
             if self.is_icon_view:
                 items_for_worker.append((row, file_path, is_external))
 
@@ -269,17 +291,17 @@ class MainWindow(QWidget):
     def on_thumbnail_ready(self, row, file_path, img, is_external):
         item = self.file_list_widget.item(row)
         if not item or item.data(Qt.ItemDataRole.UserRole) != file_path:
-            return  
+            return
 
         pixmap = QPixmap.fromImage(img)
         if is_external:
             painter = QPainter(pixmap)
             pen = QPen(QColor("yellow"))
-            pen.setWidth(6) 
+            pen.setWidth(6)
             painter.setPen(pen)
             painter.drawRect(0, 0, pixmap.width(), pixmap.height())
             painter.end()
-            item.setForeground(QColor("yellow")) 
+            item.setForeground(QColor("yellow"))
 
         item.setIcon(QIcon(pixmap))
 
@@ -299,10 +321,15 @@ class MainWindow(QWidget):
             self.image_viewer.set_image(pixmap)
             self.refresh_assigned_bubbles()
 
+            self.refresh_global_tags()
+
     # ========================== TAG MANAGEMENT ==========================
 
     def add_tag(self):
-        if not (tag_text := self.tag_input.text().strip()) or not self.active_image_path:
+        if (
+            not (tag_text := self.tag_input.text().strip())
+            or not self.active_image_path
+        ):
             self.tag_input.clear()
             return
 
@@ -312,8 +339,9 @@ class MainWindow(QWidget):
         self.refresh_assigned_bubbles()
 
     def on_tag_filter_clicked(self, item):
-        match = re.match(r"^(.*)\s\(\d+\)$", item.text())
-        tag_name = match.group(1).strip() if match else item.text().strip()
+        """Single click functionality: Filters the main file list toggleably"""
+        # Because we use custom widgets, we extract the hidden string data instead of the visible text
+        tag_name = item.data(Qt.ItemDataRole.UserRole)
 
         if self.active_filter_tag == tag_name:
             self.active_filter_tag = None
@@ -321,6 +349,20 @@ class MainWindow(QWidget):
         else:
             self.active_filter_tag = tag_name
 
+        self.update_file_list()
+
+    def toggle_specific_tag(self, tag_name):
+        """Triggered exclusively by the inline '+' or '-' UI buttons"""
+        if not self.active_image_path:
+            return
+
+        if tag_name in database.get_image_tags(self.active_image_path):
+            database.remove_tag_from_image(self.active_image_path, tag_name)
+        else:
+            database.add_tag_to_image(self.active_image_path, tag_name)
+
+        self.refresh_global_tags()
+        self.refresh_assigned_bubbles()
         self.update_file_list()
 
     def on_tag_item_clicked(self, item):
@@ -340,12 +382,74 @@ class MainWindow(QWidget):
         self.update_file_list()
 
     def refresh_global_tags(self):
-        self.tag_list_widget.clear()
-        self.tag_list_widget.addItems(database.get_all_tags())
+        # Remember where the user scrolled so the list doesn't jump annoyingly
+        v_scrollbar = self.tag_list_widget.verticalScrollBar()
+        scroll_pos = v_scrollbar.value() if v_scrollbar else 0
 
+        self.tag_list_widget.clear()
+
+        # Capture exactly what tags are on the current image
+        assigned_tags = (
+            set(database.get_image_tags(self.active_image_path))
+            if self.active_image_path
+            else set()
+        )
+
+        for item_text in database.get_all_tags():
+            match = re.match(r"^(.*)\s\(\d+\)$", item_text)
+            tag_name = match.group(1).strip() if match else item_text.strip()
+
+            # Create the master list item
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, tag_name)
+            self.tag_list_widget.addItem(item)
+
+            # Create the custom inline UI
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(5, 2, 5, 2)
+            row_layout.setSpacing(5)
+
+            # The invisible label (passes clicks through to the list filter natively)
+            lbl = QLabel(item_text)
+            lbl.setStyleSheet("color: white; background: transparent; font-size: 11px;")
+            lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+            # The dedicated Toggle button
+            is_assigned = tag_name in assigned_tags
+            btn = QPushButton("−" if is_assigned else "+")
+            btn.setFixedSize(20, 20)
+
+            # Make the button Red if assigned, Green if it can be added
+            if is_assigned:
+                btn.setStyleSheet(
+                    "QPushButton { background-color: #e74c3c; color: white; border-radius: 3px; font-weight: bold; } QPushButton:hover { background-color: #c0392b; }"
+                )
+            else:
+                btn.setStyleSheet(
+                    "QPushButton { background-color: #27ae60; color: white; border-radius: 3px; font-weight: bold; } QPushButton:hover { background-color: #2ecc71; }"
+                )
+
+            # Connect the button exclusively to the toggler (lambda freezes the exact tag name context)
+            btn.clicked.connect(lambda checked, t=tag_name: self.toggle_specific_tag(t))
+
+            row_layout.addWidget(lbl)
+            row_layout.addStretch()
+            row_layout.addWidget(btn)
+
+            item.setSizeHint(row_widget.sizeHint())
+            self.tag_list_widget.setItemWidget(item, row_widget)
+
+        # Restore highlight visualization if a filter is active
         if self.active_filter_tag:
-            items = self.tag_list_widget.findItems(self.active_filter_tag, Qt.MatchFlag.MatchStartsWith)
-            if items: items[0].setSelected(True)
+            for i in range(self.tag_list_widget.count()):
+                list_item = self.tag_list_widget.item(i)
+                if list_item.data(Qt.ItemDataRole.UserRole) == self.active_filter_tag:
+                    list_item.setSelected(True)
+                    break
+
+        if v_scrollbar:
+            v_scrollbar.setValue(scroll_pos)
 
     def clear_bubbles(self):
         while self.bubble_layout.count():
@@ -355,7 +459,8 @@ class MainWindow(QWidget):
 
     def refresh_assigned_bubbles(self):
         self.clear_bubbles()
-        if not self.active_image_path: return
+        if not self.active_image_path:
+            return
 
         for tag in database.get_image_tags(self.active_image_path):
             bubble = QLabel(tag)
@@ -366,10 +471,11 @@ class MainWindow(QWidget):
     # ========================== TIMER LOGIC ==========================
 
     def start_timer(self):
-        if not (text := self.timer_input.text().strip()): return
+        if not (text := self.timer_input.text().strip()):
+            return
 
         self.timer_interval = int(text)
-        database.save_setting("timer_seconds", str(self.timer_interval)) 
+        database.save_setting("timer_seconds", str(self.timer_interval))
         self.time_left = self.timer_interval
 
         self.timer_display.setText(str(self.time_left))
@@ -387,7 +493,7 @@ class MainWindow(QWidget):
         if self.time_left > 0:
             self.timer_display.setText(str(self.time_left))
             return
-            
+
         self.time_left = self.timer_interval
         self.timer_display.setText(str(self.time_left))
 
