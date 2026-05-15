@@ -1,13 +1,16 @@
 import sqlite3
 from config import DB_DIR, DB_PATH
 
+import threading
+
+_local = threading.local()
 
 def _get_connection():
-    """Helper to return a connection with Foreign Keys enforced."""
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("PRAGMA foreign_keys = ON;")
-    return conn
-
+    if not hasattr(_local, "conn") or _local.conn is None:
+        _local.conn = sqlite3.connect(str(DB_PATH))
+        _local.conn.execute("PRAGMA foreign_keys = ON;")
+        _local.conn.execute("PRAGMA journal_mode = WAL;")  # Bonus: enables concurrent reads
+    return _local.conn
 
 def init_database():
     DB_DIR.mkdir(parents=True, exist_ok=True)
@@ -30,6 +33,13 @@ def init_database():
                 FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
             )
         """)
+
+        # Performance indexes
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_images_filepath ON images(filepath);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_image_tags_image ON image_tags(image_id);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_image_tags_tag ON image_tags(tag_id);")
+
         conn.commit()
 
 
@@ -144,7 +154,12 @@ def remove_tag_from_image(filepath: str, tag_name: str):
         """,
             (filepath, tag_name),
         )
-
+        # Clean up orphaned image rows with no remaining tags
+        conn.execute("""
+            DELETE FROM images WHERE id NOT IN (
+                SELECT DISTINCT image_id FROM image_tags
+            )
+        """)
 
 def get_images_by_tag(tag_name: str) -> list[str]:
     with _get_connection() as conn:
@@ -248,4 +263,12 @@ def bulk_remove_tag_from_images(filepaths: list[str], tag_name: str):
             """,
                 [tag_name] + chunk,
             )
+        
+        # Clean up orphaned image rows with no remaining tags
+        conn.execute("""
+            DELETE FROM images WHERE id NOT IN (
+                SELECT DISTINCT image_id FROM image_tags
+            )
+        """)
         conn.commit()
+        

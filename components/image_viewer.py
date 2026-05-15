@@ -35,19 +35,22 @@ class ScaledImageLabel(QLabel):
 
 
 class CanvasLoader(QThread):
-    """Loads massive high-res canvases in the background to prevent UI lag."""
-
     image_ready = pyqtSignal(str, QImage)
 
     def __init__(self, file_path):
         super().__init__()
         self.file_path = file_path
+        self._cancelled = False  # ← Add cancellation flag
+
+    def cancel(self):
+        self._cancelled = True
 
     def run(self):
         reader = QImageReader(self.file_path)
         reader.setAutoTransform(True)
-        reader.setAllocationLimit(0)  # Bypass massive memory limits
+        reader.setAllocationLimit(0)
         img = reader.read()
 
-        # Ship the decoded image back to the UI thread
-        self.image_ready.emit(self.file_path, img)
+        # Only emit if we weren't cancelled during decoding
+        if not self._cancelled:
+            self.image_ready.emit(self.file_path, img)

@@ -20,8 +20,15 @@ class ThumbnailLoader(QThread):
         os.makedirs(self.cache_dir, exist_ok=True)
 
     def process_image(self, row, file_path, is_ext):
-        path_hash = hashlib.md5(file_path.encode("utf-8")).hexdigest()
+        try:
+            mtime = os.path.getmtime(file_path)
+        except OSError:
+            return row, file_path, QImage(), is_ext
+
+        hash_input = f"{file_path}:{mtime}".encode("utf-8")
+        path_hash = hashlib.md5(hash_input).hexdigest()
         cache_path = os.path.join(self.cache_dir, f"{path_hash}.png")
+
         img = QImage()
 
         if os.path.exists(cache_path):

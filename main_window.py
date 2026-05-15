@@ -1,3 +1,4 @@
+import os
 import re
 import random
 from PyQt6.QtWidgets import (
@@ -48,6 +49,7 @@ class MainWindow(QWidget):
         self.time_left = 0
         self.timer_interval = 0
         self.show_labels = False
+        self.thumb_generation = 0
 
         self.path_filter_timer = QTimer(self)
         self.path_filter_timer.setSingleShot(True)
@@ -337,6 +339,8 @@ class MainWindow(QWidget):
             else self.scanned_files
         )
 
+        display_files = [f for f in display_files if os.path.isfile(f)]
+
         # 3. Apply the Path/Text Filter
         filter_text = self.path_filter_input.text().strip().lower()
         if filter_text:
@@ -380,14 +384,31 @@ class MainWindow(QWidget):
             self.progress_bar.setValue(0)
             self.progress_bar.show()
 
+            self.thumb_generation += 1
+            current_gen = self.thumb_generation
             self.thumb_loader = ThumbnailLoader(items_for_worker, str(CACHE_DIR))
-            self.thumb_loader.thumbnail_ready.connect(self.on_thumbnail_ready)
+            self.thumb_loader.thumbnail_ready.connect(
+                lambda row, fp, img, ext, gen=current_gen: self.on_thumbnail_ready(
+                    row, fp, img, ext, gen
+                )
+            )
+
             self.thumb_loader.finished.connect(self.progress_bar.hide)
             self.thumb_loader.start()
         else:
             self.progress_bar.hide()
 
-    def on_thumbnail_ready(self, row, file_path, img, is_external):
+    def on_thumbnail_ready(self, row, file_path, img, is_external, generation):
+        if generation != self.thumb_generation:
+            return  # Signal is from a previous, stale loader run
+
+        self.loaded_thumbnail_count += 1
+        self.progress_bar.setValue(self.loaded_thumbnail_count)
+
+        item = self.file_list_widget.item(row)
+        if not item or item.data(Qt.ItemDataRole.UserRole) != file_path:
+            return
+
         # Tick the progress bar forward purely for visual feedback
         self.loaded_thumbnail_count += 1
         self.progress_bar.setValue(self.loaded_thumbnail_count)
@@ -413,16 +434,13 @@ class MainWindow(QWidget):
             return
 
         self.active_image_path = current.data(Qt.ItemDataRole.UserRole)
-
-        # 1. Update the metadata immediately
         self.refresh_assigned_bubbles()
 
-        # 2. If the user is speed-clicking, stop the previous background loader
+        # Cancel the previous loader cooperatively
         if hasattr(self, "canvas_loader") and self.canvas_loader.isRunning():
-            self.canvas_loader.terminate()
-            self.canvas_loader.wait()
+            self.canvas_loader.cancel()
+            # Don't wait — let it finish silently in the background
 
-        # 3. Spin up the background loader so the UI doesn't freeze!
         self.canvas_loader = CanvasLoader(self.active_image_path)
         self.canvas_loader.image_ready.connect(self.on_canvas_image_ready)
         self.canvas_loader.start()
@@ -527,17 +545,14 @@ class MainWindow(QWidget):
             self.update_file_list()
 
     def on_tag_item_clicked(self, item):
-        # 1. Grab the clean tag name we safely tucked away in the UserRole
         tag_name = item.data(Qt.ItemDataRole.UserRole)
 
-        # 2. Toggle the filter state (click once to filter, click again to turn it off)
         if self.active_filter_tag == tag_name:
             self.active_filter_tag = None
             self.tag_list_widget.clearSelection()
         else:
             self.active_filter_tag = tag_name
 
-        # 3. Trigger the UI to refresh the image grid based on the new filter
         self.update_file_list()
 
     def _parse_tag_name(self, formatted_text: str) -> str:
@@ -662,13 +677,13 @@ class MainWindow(QWidget):
 
     # ========================== TIMER LOGIC ==========================
     def pick_random_image(self):
-        """Helper tool to instantly pick a new image from the active list."""
-        if (list_count := self.file_list_widget.count()) > 1:
-            current_row = self.file_list_widget.currentRow()
-            rand_idx = current_row
-            while rand_idx == current_row:
-                rand_idx = random.randint(0, list_count - 1)
-            self.file_list_widget.setCurrentRow(rand_idx)
+        list_count = self.file_list_widget.count()
+        if list_count <= 1:
+            return
+
+        current_row = self.file_list_widget.currentRow()
+        candidates = [i for i in range(list_count) if i != current_row]
+        self.file_list_widget.setCurrentRow(random.choice(candidates))
 
     def start_timer(self):
         if not (text := self.timer_input.text().strip()):
@@ -707,3 +722,16 @@ class MainWindow(QWidget):
         self.timer_display.setText(str(self.time_left))
 
         self.pick_random_image()
+
+    def closeEvent(self, event):
+        self.countdown_timer.stop()
+
+        if self.thumb_loader and self.thumb_loader.isRunning():
+            self.thumb_loader.stop()
+            self.thumb_loader.wait()
+
+        if hasattr(self, "canvas_loader") and self.canvas_loader.isRunning():
+            self.canvas_loader.cancel()
+            self.canvas_loader.wait(2000)  # Wait up to 2 seconds then give up
+
+        event.accept()

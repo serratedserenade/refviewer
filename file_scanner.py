@@ -11,8 +11,9 @@ def scan_directory(path: str) -> list[str]:
         raise ValueError(f"Invalid directory selected: {clean_path}")
 
     for root, _, files in os.walk(clean_path):
-        for file in files:
+        for file in sorted(files):  # ← Sort within each directory
             if file.lower().endswith(IMAGE_EXTENSIONS):
                 file_list.append(os.path.join(root, file))
 
+    file_list.sort()  # ← Sort the final result for cross-directory consistency
     return file_list
