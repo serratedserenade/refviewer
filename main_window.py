@@ -1,4 +1,3 @@
-import sys
 import re
 import random
 from PyQt6.QtWidgets import (
@@ -14,6 +13,8 @@ from PyQt6.QtWidgets import (
     QFrame,
     QApplication,
     QProgressBar,
+    QInputDialog,
+    QMessageBox,
 )
 from PyQt6.QtGui import (
     QPixmap,
@@ -22,13 +23,12 @@ from PyQt6.QtGui import (
     QColor,
     QIcon,
     QPen,
-    QImageReader,
 )
 from PyQt6.QtCore import Qt, QTimer, QSize
 
-from config import STYLES, CACHE_DIR
+from config import STYLES, CACHE_DIR, TAG_ICONS, TAG_BTN_SIZE, TAG_PARSE_REGEX
 from file_scanner import scan_directory
-from components.image_viewer import ScaledImageLabel
+from components.image_viewer import ScaledImageLabel, CanvasLoader
 from components.thumbnail_loader import ThumbnailLoader
 import database
 
@@ -114,6 +114,11 @@ class MainWindow(QWidget):
         self.file_list_widget = QListWidget()
         self.file_list_widget.setStyleSheet(STYLES["list"])
         self.file_list_widget.currentItemChanged.connect(self.on_file_item_changed)
+
+        self.file_list_widget.setSelectionMode(
+            QListWidget.SelectionMode.ExtendedSelection
+        )
+        self.file_list_widget.itemSelectionChanged.connect(self.on_selection_changed)
 
         layout.addWidget(self.file_list_widget)
 
@@ -230,7 +235,7 @@ class MainWindow(QWidget):
         )
         self.tag_list_widget = QListWidget()
         self.tag_list_widget.setStyleSheet(STYLES["list"])
-        self.tag_list_widget.itemClicked.connect(self.on_tag_filter_clicked)
+        self.tag_list_widget.itemClicked.connect(self.on_tag_item_clicked)
 
         layout.addWidget(self.tag_list_widget)
 
@@ -409,11 +414,23 @@ class MainWindow(QWidget):
 
         self.active_image_path = current.data(Qt.ItemDataRole.UserRole)
 
-        # NEW: Use ImageReader to explicitly ignore EXIF rotation metadata
-        reader = QImageReader(self.active_image_path)
-        reader.setAutoTransform(True)
-        reader.setAllocationLimit(0)
-        img = reader.read()
+        # 1. Update the metadata immediately
+        self.refresh_assigned_bubbles()
+
+        # 2. If the user is speed-clicking, stop the previous background loader
+        if hasattr(self, "canvas_loader") and self.canvas_loader.isRunning():
+            self.canvas_loader.terminate()
+            self.canvas_loader.wait()
+
+        # 3. Spin up the background loader so the UI doesn't freeze!
+        self.canvas_loader = CanvasLoader(self.active_image_path)
+        self.canvas_loader.image_ready.connect(self.on_canvas_image_ready)
+        self.canvas_loader.start()
+
+    def on_canvas_image_ready(self, requested_path, img):
+        # Prevent race conditions if the user clicked 5 images rapidly
+        if requested_path != self.active_image_path:
+            return
 
         if img.isNull():
             self.image_viewer.setText("Failed to load image file.")
@@ -423,52 +440,91 @@ class MainWindow(QWidget):
             pixmap = QPixmap.fromImage(img)
             self.image_viewer.setStyleSheet("")
             self.image_viewer.set_image(pixmap)
-            self.refresh_assigned_bubbles()
 
-            # Update the tag list UI so the +/- buttons sync to this new picture!
-            self.refresh_global_tags()
+    def get_selected_paths(self):
+        """Returns a list of all currently selected image filepaths."""
+        return [
+            item.data(Qt.ItemDataRole.UserRole)
+            for item in self.file_list_widget.selectedItems()
+        ]
+
+    def on_selection_changed(self):
+        """Refreshes the right sidebar whenever you Shift+Click multiple items."""
+        self.refresh_global_tags()
 
     # ========================== TAG MANAGEMENT ==========================
 
     def add_tag(self):
-        if (
-            not (tag_text := self.tag_input.text().strip())
-            or not self.active_image_path
-        ):
+        tag_text = self.tag_input.text().strip()
+        selected_paths = self.get_selected_paths()
+
+        if not tag_text or not selected_paths:
             self.tag_input.clear()
             return
 
-        database.add_tag_to_image(self.active_image_path, tag_text)
+        # Execute 1 bulk transaction instead of 500 individual ones!
+        database.bulk_add_tag_to_images(selected_paths, tag_text)
+
         self.tag_input.clear()
         self.refresh_global_tags()
         self.refresh_assigned_bubbles()
 
-    def on_tag_filter_clicked(self, item):
-        """Single click functionality: Filters the main file list toggleably"""
-        # Because we use custom widgets, we extract the hidden string data instead of the visible text
-        tag_name = item.data(Qt.ItemDataRole.UserRole)
+    def action_rename_tag(self, old_name):
+        """Spawns a pop-up to rename a tag, then updates the database and UI."""
+        # Open a styled dialog box
+        new_name, ok = QInputDialog.getText(
+            self, "Rename Tag", f"Rename '{old_name}' to:"
+        )
 
-        if self.active_filter_tag == tag_name:
-            self.active_filter_tag = None
-            self.tag_list_widget.clearSelection()
-        else:
-            self.active_filter_tag = tag_name
+        if ok and new_name.strip():
+            clean_name = new_name.strip()
+            database.rename_tag(old_name, clean_name)
 
-        self.update_file_list()
+            # If we renamed the tag we are currently filtering by, update the filter state
+            if self.active_filter_tag == old_name:
+                self.active_filter_tag = clean_name
+
+            self.refresh_global_tags()
+            self.refresh_assigned_bubbles()
+            self.update_file_list()
+
+    def action_delete_tag(self, tag_name):
+        """Spawns a confirmation warning to delete a tag globally."""
+        reply = QMessageBox.question(
+            self,
+            "Delete Tag",
+            f"Are you sure you want to permanently delete the tag '{tag_name}'?\nThis will remove it from all images.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            database.delete_tag(tag_name)
+
+            # If we deleted the tag we are actively looking through, clear the filter
+            if self.active_filter_tag == tag_name:
+                self.active_filter_tag = None
+
+            self.refresh_global_tags()
+            self.refresh_assigned_bubbles()
+            self.update_file_list()
 
     def toggle_specific_tag(self, tag_name):
-        """Triggered exclusively by the inline '+' or '-' UI buttons"""
-        if not self.active_image_path:
+        selected_paths = self.get_selected_paths()
+        if not selected_paths:
             return
 
-        if tag_name in database.get_image_tags(self.active_image_path):
-            database.remove_tag_from_image(self.active_image_path, tag_name)
+        shared_tags = database.get_shared_tags(selected_paths)
+
+        if tag_name in shared_tags:
+            database.bulk_remove_tag_from_images(selected_paths, tag_name)
         else:
-            database.add_tag_to_image(self.active_image_path, tag_name)
+            database.bulk_add_tag_to_images(selected_paths, tag_name)
 
         self.refresh_global_tags()
         self.refresh_assigned_bubbles()
-        self.update_file_list()
+
+        if self.active_filter_tag:
+            self.update_file_list()
 
     def on_tag_item_clicked(self, item):
         if not self.active_image_path:
@@ -486,72 +542,105 @@ class MainWindow(QWidget):
         self.refresh_assigned_bubbles()
         self.update_file_list()
 
-    def refresh_global_tags(self):
-        # Remember where the user scrolled so the list doesn't jump annoyingly
-        v_scrollbar = self.tag_list_widget.verticalScrollBar()
-        scroll_pos = v_scrollbar.value() if v_scrollbar else 0
+    def _parse_tag_name(self, formatted_text: str) -> str:
+        """Strips the image count (e.g., '(5)') from the database tag string."""
+        match = re.match(TAG_PARSE_REGEX, formatted_text)
+        return match.group(1).strip() if match else formatted_text.strip()
 
-        self.tag_list_widget.clear()
+    def _create_tag_button(
+        self, icon_str: str, style_key: str, callback
+    ) -> QPushButton:
+        """Factory method to generate standardized tag management buttons."""
+        btn = QPushButton(icon_str)
+        btn.setFixedSize(TAG_BTN_SIZE, TAG_BTN_SIZE)
+        btn.setStyleSheet(STYLES[style_key])
+        btn.clicked.connect(callback)
+        return btn
 
-        # Capture exactly what tags are on the current image
-        assigned_tags = (
-            set(database.get_image_tags(self.active_image_path))
-            if self.active_image_path
-            else set()
+    def _build_tag_row_widget(
+        self, tag_name: str, display_text: str, is_assigned: bool
+    ) -> QWidget:
+        """Constructs an entire horizontal layout row for a single tag."""
+        row_widget = QWidget()
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(5, 2, 5, 2)
+        row_layout.setSpacing(5)
+
+        # 1. Label
+        lbl = QLabel(display_text)
+        lbl.setStyleSheet(STYLES["tag_row_label"])
+        lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+        # 2. Action Buttons (Rename / Delete)
+        btn_rename = self._create_tag_button(
+            TAG_ICONS["rename"],
+            "tag_btn_action",
+            lambda checked, t=tag_name: self.action_rename_tag(t),
         )
 
-        for item_text in database.get_all_tags():
-            match = re.match(r"^(.*)\s\(\d+\)$", item_text)
-            tag_name = match.group(1).strip() if match else item_text.strip()
+        btn_delete = self._create_tag_button(
+            TAG_ICONS["delete"],
+            "tag_btn_delete",
+            lambda checked, t=tag_name: self.action_delete_tag(t),
+        )
 
-            # Create the master list item
+        # 3. Quick Toggle (+ / -)
+        toggle_icon = TAG_ICONS["remove"] if is_assigned else TAG_ICONS["add"]
+        toggle_style = "tag_btn_assigned" if is_assigned else "tag_btn_unassigned"
+        btn_toggle = self._create_tag_button(
+            toggle_icon,
+            toggle_style,
+            lambda checked, t=tag_name: self.toggle_specific_tag(t),
+        )
+
+        # 4. Assembly
+        row_layout.addWidget(lbl)
+        row_layout.addStretch()
+        row_layout.addWidget(btn_rename)
+        row_layout.addWidget(btn_delete)
+        row_layout.addWidget(btn_toggle)
+
+        return row_widget
+
+    def _restore_tag_list_selection(self):
+        """Re-applies the blue visual highlight if the user is actively filtering."""
+        if not self.active_filter_tag:
+            return
+
+        for i in range(self.tag_list_widget.count()):
+            list_item = self.tag_list_widget.item(i)
+            if list_item.data(Qt.ItemDataRole.UserRole) == self.active_filter_tag:
+                list_item.setSelected(True)
+                break
+
+    def refresh_global_tags(self):
+        """Main orchestrator: clears, calculates sets, and rebuilds the tag list UI."""
+        v_scrollbar = self.tag_list_widget.verticalScrollBar()
+        scroll_pos = v_scrollbar.value() if v_scrollbar else 0
+        self.tag_list_widget.clear()
+
+        # Database set math
+        selected_paths = self.get_selected_paths()
+        shared_tags = (
+            database.get_shared_tags(selected_paths) if selected_paths else set()
+        )
+
+        # Build UI list
+        for item_text in database.get_all_tags():
+            tag_name = self._parse_tag_name(item_text)
+
             item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, tag_name)
             self.tag_list_widget.addItem(item)
 
-            # Create the custom inline UI
-            row_widget = QWidget()
-            row_layout = QHBoxLayout(row_widget)
-            row_layout.setContentsMargins(5, 2, 5, 2)
-            row_layout.setSpacing(5)
-
-            # The invisible label (passes clicks through to the list filter natively)
-            lbl = QLabel(item_text)
-            lbl.setStyleSheet("color: white; background: transparent; font-size: 11px;")
-            lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-
-            # The dedicated Toggle button
-            is_assigned = tag_name in assigned_tags
-            btn = QPushButton("−" if is_assigned else "+")
-            btn.setFixedSize(20, 20)
-
-            # Make the button Red if assigned, Green if it can be added
-            if is_assigned:
-                btn.setStyleSheet(
-                    "QPushButton { background-color: #e74c3c; color: white; border-radius: 3px; font-weight: bold; } QPushButton:hover { background-color: #c0392b; }"
-                )
-            else:
-                btn.setStyleSheet(
-                    "QPushButton { background-color: #27ae60; color: white; border-radius: 3px; font-weight: bold; } QPushButton:hover { background-color: #2ecc71; }"
-                )
-
-            # Connect the button exclusively to the toggler (lambda freezes the exact tag name context)
-            btn.clicked.connect(lambda checked, t=tag_name: self.toggle_specific_tag(t))
-
-            row_layout.addWidget(lbl)
-            row_layout.addStretch()
-            row_layout.addWidget(btn)
+            # Let the builder encapsulate all Qt layout geometry!
+            is_assigned = tag_name in shared_tags
+            row_widget = self._build_tag_row_widget(tag_name, item_text, is_assigned)
 
             item.setSizeHint(row_widget.sizeHint())
             self.tag_list_widget.setItemWidget(item, row_widget)
 
-        # Restore highlight visualization if a filter is active
-        if self.active_filter_tag:
-            for i in range(self.tag_list_widget.count()):
-                list_item = self.tag_list_widget.item(i)
-                if list_item.data(Qt.ItemDataRole.UserRole) == self.active_filter_tag:
-                    list_item.setSelected(True)
-                    break
+        self._restore_tag_list_selection()
 
         if v_scrollbar:
             v_scrollbar.setValue(scroll_pos)
@@ -574,6 +663,14 @@ class MainWindow(QWidget):
         self.bubble_layout.addStretch()
 
     # ========================== TIMER LOGIC ==========================
+    def pick_random_image(self):
+        """Helper tool to instantly pick a new image from the active list."""
+        if (list_count := self.file_list_widget.count()) > 1:
+            current_row = self.file_list_widget.currentRow()
+            rand_idx = current_row
+            while rand_idx == current_row:
+                rand_idx = random.randint(0, list_count - 1)
+            self.file_list_widget.setCurrentRow(rand_idx)
 
     def start_timer(self):
         if not (text := self.timer_input.text().strip()):
@@ -585,6 +682,10 @@ class MainWindow(QWidget):
 
         self.timer_display.setText(str(self.time_left))
         self.timer_display.show()
+
+        # ACTIVATE IMMEDIATELY!
+        self.pick_random_image()
+
         self.countdown_timer.start(1000)
 
     def stop_timer(self):
@@ -594,6 +695,11 @@ class MainWindow(QWidget):
         self.timer_display.hide()
 
     def update_timer(self):
+        # Auto-Pause if the user is multi-selecting
+        if len(self.file_list_widget.selectedItems()) > 1:
+            self.timer_display.setText("Paused (Multi-Select)")
+            return
+
         self.time_left -= 1
         if self.time_left > 0:
             self.timer_display.setText(str(self.time_left))
@@ -602,9 +708,4 @@ class MainWindow(QWidget):
         self.time_left = self.timer_interval
         self.timer_display.setText(str(self.time_left))
 
-        if (list_count := self.file_list_widget.count()) > 1:
-            current_row = self.file_list_widget.currentRow()
-            rand_idx = current_row
-            while rand_idx == current_row:
-                rand_idx = random.randint(0, list_count - 1)
-            self.file_list_widget.setCurrentRow(rand_idx)
+        self.pick_random_image()

@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QImage, QImageReader
 
+
 class ThumbnailLoader(QThread):
     # Sends: row_index, file_path, image_data, is_external
     thumbnail_ready = pyqtSignal(int, str, QImage, bool)
@@ -14,12 +15,12 @@ class ThumbnailLoader(QThread):
         self.items_to_load = items_to_load
         self.cache_dir = cache_dir
         self.is_running = True
-        
+
         # 1. Force the directory to exist the moment the thread initializes
         os.makedirs(self.cache_dir, exist_ok=True)
 
     def process_image(self, row, file_path, is_ext):
-        path_hash = hashlib.md5(file_path.encode('utf-8')).hexdigest()
+        path_hash = hashlib.md5(file_path.encode("utf-8")).hexdigest()
         cache_path = os.path.join(self.cache_dir, f"{path_hash}.png")
         img = QImage()
 
@@ -28,14 +29,16 @@ class ThumbnailLoader(QThread):
         else:
             reader = QImageReader(file_path)
             reader.setAutoTransform(True)
-            reader.setAllocationLimit(0) 
-            
+            reader.setAllocationLimit(0)
+
             size = reader.size()
             if size.isValid():
-                reader.setScaledSize(size.scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio))
-            
+                reader.setScaledSize(
+                    size.scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio)
+                )
+
             img = reader.read()
-            
+
             if not img.isNull():
                 # 2. Force the directory to exist right before saving (in case you delete it mid-run)
                 os.makedirs(self.cache_dir, exist_ok=True)
@@ -51,12 +54,12 @@ class ThumbnailLoader(QThread):
                 executor.submit(self.process_image, row, fp, is_ext): (row, fp, is_ext)
                 for row, fp, is_ext in self.items_to_load
             }
-            
+
             for future in as_completed(futures):
                 if not self.is_running:
                     executor.shutdown(wait=False, cancel_futures=True)
                     break
-                
+
                 try:
                     row, file_path, img, is_ext = future.result()
                     if not img.isNull() and self.is_running:
