@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QApplication,
 )
-from PyQt6.QtGui import QPixmap, QPainter, QIntValidator, QColor, QIcon, QPen
+from PyQt6.QtGui import QPixmap, QPainter, QIntValidator, QColor, QIcon, QPen, QImageReader
 from PyQt6.QtCore import Qt, QTimer, QSize
 
 from config import STYLES, CACHE_DIR
@@ -310,17 +310,24 @@ class MainWindow(QWidget):
             return
 
         self.active_image_path = current.data(Qt.ItemDataRole.UserRole)
-        pixmap = QPixmap(self.active_image_path)
+        
+        # NEW: Use ImageReader to explicitly ignore EXIF rotation metadata
+        reader = QImageReader(self.active_image_path)
+        reader.setAutoTransform(True)
+        reader.setAllocationLimit(0) 
+        img = reader.read()
 
-        if pixmap.isNull():
+        if img.isNull():
             self.image_viewer.setText("Failed to load image file.")
             self.image_viewer.setStyleSheet(STYLES["error"])
             self.clear_bubbles()
         else:
+            pixmap = QPixmap.fromImage(img)
             self.image_viewer.setStyleSheet("")
             self.image_viewer.set_image(pixmap)
             self.refresh_assigned_bubbles()
-
+            
+            # Update the tag list UI so the +/- buttons sync to this new picture!
             self.refresh_global_tags()
 
     # ========================== TAG MANAGEMENT ==========================

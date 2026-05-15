@@ -14,6 +14,9 @@ class ThumbnailLoader(QThread):
         self.items_to_load = items_to_load
         self.cache_dir = cache_dir
         self.is_running = True
+        
+        # 1. Force the directory to exist the moment the thread initializes
+        os.makedirs(self.cache_dir, exist_ok=True)
 
     def process_image(self, row, file_path, is_ext):
         path_hash = hashlib.md5(file_path.encode('utf-8')).hexdigest()
@@ -24,12 +27,18 @@ class ThumbnailLoader(QThread):
             img.load(cache_path)
         else:
             reader = QImageReader(file_path)
+            reader.setAutoTransform(True)
+            reader.setAllocationLimit(0) 
+            
             size = reader.size()
             if size.isValid():
                 reader.setScaledSize(size.scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio))
+            
             img = reader.read()
             
             if not img.isNull():
+                # 2. Force the directory to exist right before saving (in case you delete it mid-run)
+                os.makedirs(self.cache_dir, exist_ok=True)
                 img.save(cache_path, "PNG")
 
         return row, file_path, img, is_ext
@@ -50,8 +59,9 @@ class ThumbnailLoader(QThread):
                     row, file_path, img, is_ext = future.result()
                     if not img.isNull() and self.is_running:
                         self.thumbnail_ready.emit(row, file_path, img, is_ext)
-                except Exception:
-                    pass
+                except Exception as e:
+                    # 3. Actually print the error to the terminal so we can see what went wrong!
+                    print(f"Thumbnail generator failed for a file: {e}")
 
     def stop(self):
         self.is_running = False
