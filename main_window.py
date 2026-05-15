@@ -13,9 +13,17 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QFrame,
     QApplication,
-    QProgressBar
+    QProgressBar,
 )
-from PyQt6.QtGui import QPixmap, QPainter, QIntValidator, QColor, QIcon, QPen, QImageReader
+from PyQt6.QtGui import (
+    QPixmap,
+    QPainter,
+    QIntValidator,
+    QColor,
+    QIcon,
+    QPen,
+    QImageReader,
+)
 from PyQt6.QtCore import Qt, QTimer, QSize
 
 from config import STYLES, CACHE_DIR
@@ -39,6 +47,11 @@ class MainWindow(QWidget):
         self.thumb_loader = None
         self.time_left = 0
         self.timer_interval = 0
+        self.show_labels = False
+
+        self.path_filter_timer = QTimer(self)
+        self.path_filter_timer.setSingleShot(True)
+        self.path_filter_timer.timeout.connect(self.update_file_list)
 
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -63,7 +76,7 @@ class MainWindow(QWidget):
         sidebar = QFrame()
         sidebar.setStyleSheet(STYLES["sidebar"])
         sidebar.setFixedWidth(300)
-        
+
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
@@ -76,7 +89,7 @@ class MainWindow(QWidget):
         layout.addWidget(self.path_display)
 
         # ROW 2: Action Buttons
-        buttons_row = QHBoxLayout()
+        buttons_row = QVBoxLayout()
         buttons_row.setContentsMargins(0, 0, 0, 0)
         buttons_row.setSpacing(5)
 
@@ -84,21 +97,37 @@ class MainWindow(QWidget):
         btn_browse.setStyleSheet(STYLES["button"])
         btn_browse.clicked.connect(self.select_folder)
 
-        btn_toggle = QPushButton("Toggle View")
+        btn_toggle = QPushButton("Paths/Thumbnails")
         btn_toggle.setStyleSheet(STYLES["button"])
         btn_toggle.clicked.connect(self.toggle_view_mode)
 
+        btn_toggle_text = QPushButton("Paths on Thumbnails")
+        btn_toggle_text.setStyleSheet(STYLES["button"])
+        btn_toggle_text.clicked.connect(self.toggle_text_mode)
+
         buttons_row.addWidget(btn_browse)
         buttons_row.addWidget(btn_toggle)
+        buttons_row.addWidget(btn_toggle_text)
         layout.addLayout(buttons_row)
 
         # ROW 3: File Data List
         self.file_list_widget = QListWidget()
         self.file_list_widget.setStyleSheet(STYLES["list"])
         self.file_list_widget.currentItemChanged.connect(self.on_file_item_changed)
+
         layout.addWidget(self.file_list_widget)
 
-        # ROW 4: Thumbnail Loading Progress Bar
+        # ROW 4: Path Filter Input
+        self.path_filter_input = QLineEdit()
+        self.path_filter_input.setPlaceholderText("Filter by path/filename...")
+        self.path_filter_input.setStyleSheet(STYLES["input"])
+        # Use lambda to trigger the 300ms delay timer
+        self.path_filter_input.textChanged.connect(
+            lambda: self.path_filter_timer.start(300)
+        )
+        layout.addWidget(self.path_filter_input)
+
+        # ROW 5: Thumbnail Loading Progress Bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(8)  # Slim and unobtrusive
         self.progress_bar.setTextVisible(False)  # Hide the percentage text
@@ -258,6 +287,11 @@ class MainWindow(QWidget):
         self.is_icon_view = not self.is_icon_view
         self.update_file_list()
 
+    def toggle_text_mode(self):
+        """Show or hide the filepaths underneath the images."""
+        self.show_labels = not self.show_labels
+        self.update_file_list()
+
     def update_file_list(self):
         if self.thumb_loader and self.thumb_loader.isRunning():
             self.thumb_loader.stop()
@@ -265,31 +299,66 @@ class MainWindow(QWidget):
 
         self.file_list_widget.clear()
 
+        # Define sizes and alignments dynamically based on the label toggle
+        if self.show_labels:
+            grid_size = QSize(120, 180)
+            icon_align = Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom
+        else:
+            grid_size = QSize(110, 110)
+            icon_align = (
+                Qt.AlignmentFlag.AlignCenter
+            )  # Perfectly center the icon in the box
+
+        # 1. Config List & Dynamic Grid Sizing
         if self.is_icon_view:
             self.file_list_widget.setViewMode(QListWidget.ViewMode.IconMode)
             self.file_list_widget.setIconSize(QSize(100, 100))
             self.file_list_widget.setResizeMode(QListWidget.ResizeMode.Adjust)
-            self.file_list_widget.setGridSize(QSize(120, 140))
+            self.file_list_widget.setGridSize(grid_size)
             self.file_list_widget.setSpacing(5)
             self.file_list_widget.setWordWrap(True)
+            self.file_list_widget.setUniformItemSizes(True)
         else:
             self.file_list_widget.setViewMode(QListWidget.ViewMode.ListMode)
             self.file_list_widget.setGridSize(QSize())
             self.file_list_widget.setSpacing(0)
             self.file_list_widget.setWordWrap(False)
+            self.file_list_widget.setUniformItemSizes(True)
 
+        # 2. Extract Base Files
         display_files = (
             database.get_images_by_tag(self.active_filter_tag)
             if self.active_filter_tag
             else self.scanned_files
         )
 
+        # 3. Apply the Path/Text Filter
+        filter_text = self.path_filter_input.text().strip().lower()
+        if filter_text:
+            display_files = [f for f in display_files if filter_text in f.lower()]
+
+        # 4. Generate the UI Row Items
         items_for_worker = []
         for row, file_path in enumerate(display_files):
             is_external = file_path not in self.scanned_files
 
-            item = QListWidgetItem(file_path)
+            # ALWAYS show text if in List Mode. Only obey the toggle if in Icon Mode.
+            if not self.is_icon_view or self.show_labels:
+                display_text = file_path
+            else:
+                display_text = ""
+
+            item = QListWidgetItem(display_text)
             item.setData(Qt.ItemDataRole.UserRole, file_path)
+
+            if self.is_icon_view:
+                item.setSizeHint(grid_size)
+                item.setTextAlignment(icon_align)
+            else:
+                item.setSizeHint(QSize(250, 24))
+                item.setTextAlignment(
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                )
 
             if not self.is_icon_view and is_external:
                 item.setForeground(QColor("yellow"))
@@ -299,24 +368,22 @@ class MainWindow(QWidget):
             if self.is_icon_view:
                 items_for_worker.append((row, file_path, is_external))
 
+        # 5. Multithreading the Icons
         if self.is_icon_view and items_for_worker:
-            # 1. Setup the Progress Bar
             self.loaded_thumbnail_count = 0
             self.progress_bar.setMaximum(len(items_for_worker))
             self.progress_bar.setValue(0)
             self.progress_bar.show()
 
-            # 2. Start the Thread
             self.thumb_loader = ThumbnailLoader(items_for_worker, str(CACHE_DIR))
             self.thumb_loader.thumbnail_ready.connect(self.on_thumbnail_ready)
-            # Hide the bar automatically when the thread is completely finished wrapping up
-            self.thumb_loader.finished.connect(self.progress_bar.hide) 
+            self.thumb_loader.finished.connect(self.progress_bar.hide)
             self.thumb_loader.start()
         else:
             self.progress_bar.hide()
 
     def on_thumbnail_ready(self, row, file_path, img, is_external):
-              # Tick the progress bar forward purely for visual feedback
+        # Tick the progress bar forward purely for visual feedback
         self.loaded_thumbnail_count += 1
         self.progress_bar.setValue(self.loaded_thumbnail_count)
 
@@ -341,11 +408,11 @@ class MainWindow(QWidget):
             return
 
         self.active_image_path = current.data(Qt.ItemDataRole.UserRole)
-        
+
         # NEW: Use ImageReader to explicitly ignore EXIF rotation metadata
         reader = QImageReader(self.active_image_path)
         reader.setAutoTransform(True)
-        reader.setAllocationLimit(0) 
+        reader.setAllocationLimit(0)
         img = reader.read()
 
         if img.isNull():
@@ -357,7 +424,7 @@ class MainWindow(QWidget):
             self.image_viewer.setStyleSheet("")
             self.image_viewer.set_image(pixmap)
             self.refresh_assigned_bubbles()
-            
+
             # Update the tag list UI so the +/- buttons sync to this new picture!
             self.refresh_global_tags()
 
