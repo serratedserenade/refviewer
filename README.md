@@ -9,7 +9,9 @@
 
 # RefViewer
 
-RefViewer is a fast, local desktop image viewer and reference gallery tool built with PyQt6 and SQLite. It is designed to help artists, designers, or anyone who needs to seamlessly organize, tag, and view reference images across their filesystem.
+![alt text](2026-05-15_224203.png)
+
+RefViewer is a fast (questionable, this is vibe coded after all), local desktop image viewer and reference gallery tool built with PyQt6 and SQLite. It is designed to help artists, designers, or anyone who needs to seamlessly organize, tag, and view reference images across their filesystem.
 
 ## Features
 
