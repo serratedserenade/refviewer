@@ -27,20 +27,42 @@ RefViewer is a fast (questionable, this is vibe coded after all), local desktop 
 This project uses modern Python tooling. You will need [uv](https://github.com/astral-sh/uv) and [mise](https://github.com/jdx/mise) installed on your system.
 
 1. Clone or download this repository.
-2. Install dependencies (creates `.venv` automatically):
+2. Activate Mise in Your Shell
+
+    You must hook mise into your shell so it can dynamically swap tool versions when you change directories. Add the appropriate line to your shell configuration file (e.g., ~/.zshrc, ~/.bashrc): 
+    ```bash
+    # For Zsh
+    echo 'eval "$(mise activate zsh)"' >> ~/.zshrc
+
+    # For Bash
+    echo 'eval "$(mise activate bash)"' >> ~/.bashrc
+
+    # Trust the local configuration file
+    mise trust
+
+    # Install Python, uv, and any other tools defined in mise.toml
+    mise install
+3. Create Your Virtual Environment Using uv
+
+    Once mise has successfully provisioned Python and uv, use uv to instantly create a virtual environment and lock down your Python packages. 
+        bash
+
+        # Create a .venv virtual environment using the mise-managed Python version
+        uv venv
+
+        # Activate the virtual environment
+        source .venv/bin/activate  # macOS/Linux
+        .venv\Scripts\activate     # Windows
+4. Install dependencies (creates `.venv` automatically):
    ```bash
     uv sync
 Use the built-in task runner to start the app:
 
     mise run dev
 
-Available Tasks (mise.toml)
+Use the following to see what you can do
 
-    mise run dev — Runs the application normally.
-    mise run watch — Runs the app in Auto-Restart mode. Saving any .py file instantly reloads the app.
-    mise run build — Compiles the app into a standalone cross-platform executable directory (using PyInstaller).
-    mise run build:one — Compiles the app into a single standalone binary file.
-    mise run clean — Wipes compiler cache, build artifacts, and virtual environments.
+    mise tasks
 
 ### Where is my data saved?
 
@@ -53,17 +75,17 @@ RefViewer dynamically checks your Operating System and stores the SQLite databas
 To clear out old sideways images or broken thumbnails, simply delete your OS thumbnails cache folder located in these directories.
 Project Structure
 
-refviewer/
- ┣ components/
- ┃ ┣ __init__.py
- ┃ ┣ image_viewer.py        # Central canvas rendering, handles EXIF & limits
- ┃ ┗ thumbnail_loader.py    # Multi-threaded concurrent cache generation
- ┣ config.py                # UI Styling and dynamic cross-platform paths
- ┣ database.py              # SQLite3 data management & tag schema
- ┣ file_scanner.py          # OS walking and file discovery
- ┣ main_window.py           # Core GUI layouts, signals, and routing
- ┣ main.py                  # Standard app entry point
- ┗ mise.toml                # Task runner commands (npm run style)
+    refviewer/
+    ┣ components/
+    ┃ ┣ __init__.py
+    ┃ ┣ image_viewer.py        # Central canvas rendering, handles EXIF & limits
+    ┃ ┗ thumbnail_loader.py    # Multi-threaded concurrent cache generation
+    ┣ config.py                # UI Styling and dynamic cross-platform paths
+    ┣ database.py              # SQLite3 data management & tag schema
+    ┣ file_scanner.py          # OS walking and file discovery
+    ┣ main_window.py           # Core GUI layouts, signals, and routing
+    ┣ main.py                  # Standard app entry point
+    ┗ mise.toml                # Task runner commands (npm run style)
 
 # License
 
