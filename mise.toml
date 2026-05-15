@@ -1,0 +1,5 @@
+[tools]
+python = "latest"
+ruff = "latest"
+uv = "latest"
+ty = "latest"
