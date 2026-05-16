@@ -29,7 +29,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtCore import Qt, QTimer, QSize
 
-from config import STYLES, CACHE_DIR, TAG_ICONS, TAG_BTN_SIZE, TAG_PARSE_REGEX
+from config import STYLES, CACHE_DIR, TAG_ICONS, TAG_BTN_SIZE, TAG_PARSE_REGEX, APP_TIMER_DEFAULT
 from file_scanner import scan_directory
 from components.image_viewer import ScaledImageLabel, CanvasLoader
 from components.thumbnail_loader import ThumbnailLoader
@@ -756,12 +756,36 @@ class MainWindow(QWidget):
         self.time_left = self.timer_interval
         self.timer_display.setText(str(self.time_left))
 
+    def toggle_timer(self):
+        """Toggle the countdown timer on/off. Defaults to 60 seconds if no value is set."""
+        focused = QApplication.focusWidget()
+        if isinstance(focused, QLineEdit):
+            return
+
+        # If the timer is already running, stop it
+        if self.countdown_timer.isActive():
+            self.stop_timer()
+            return
+
+        # If the input field is empty and there's no saved value, default to 60
+        if not self.timer_input.text().strip():
+            self.timer_input.setText(APP_TIMER_DEFAULT)
+            database.save_setting("timer_seconds", APP_TIMER_DEFAULT)
+
+        self.start_timer()
+
     def _setup_shortcuts(self):
         shortcut = QShortcut(QKeySequence("F"), self)
         shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-        shortcut.activated.connect(self.toggle_sidebars)
+        shortcut.activated.connect(self.toggle_ui_visibility)
 
-    def toggle_sidebars(self):
+        shortcut_timer = QShortcut(QKeySequence("Space"), self)
+        shortcut_timer.setContext(Qt.ShortcutContext.WindowShortcut)
+        shortcut_timer.activated.connect(self.toggle_timer)
+
+
+
+    def toggle_ui_visibility(self):
         """Toggle both sidebars for a fullscreen-like focus view."""
         focused = QApplication.focusWidget()
         if isinstance(focused, QLineEdit):
@@ -771,6 +795,7 @@ class MainWindow(QWidget):
 
         self.left_sidebar.setVisible(not should_hide)
         self.right_sidebar.setVisible(not should_hide)
+        self.bubble_container.setVisible(not should_hide)
 
         # When sidebars are hidden, focus falls into a void.
         # Force focus back to the main window so the shortcut keeps working.

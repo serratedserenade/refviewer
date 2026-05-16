@@ -29,6 +29,8 @@ def _get_system_paths() -> tuple[Path, Path]:
 DB_DIR, CACHE_DIR = _get_system_paths()
 DB_PATH = DB_DIR / "data.db"
 
+APP_TIMER_DEFAULT = "60"
+
 
 # ==============================================================================
 # Global Stylesheet Dictionary
