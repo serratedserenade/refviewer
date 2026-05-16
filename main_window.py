@@ -24,6 +24,8 @@ from PyQt6.QtGui import (
     QColor,
     QIcon,
     QPen,
+    QKeySequence,
+    QShortcut
 )
 from PyQt6.QtCore import Qt, QTimer, QSize
 
@@ -50,7 +52,11 @@ class MainWindow(QWidget):
         self.timer_interval = 0
         self.show_labels = False
         self.thumb_generation = 0
+        self.left_sidebar: QFrame = None
+        self.right_sidebar: QFrame = None
+
         self._canvas_loaders = []
+        self._setup_shortcuts()
 
         self.path_filter_timer = QTimer(self)
         self.path_filter_timer.setSingleShot(True)
@@ -71,11 +77,15 @@ class MainWindow(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        main_layout.addWidget(self._create_left_sidebar())
-        main_layout.addWidget(self._create_center_canvas())
-        main_layout.addWidget(self._create_right_sidebar())
+        self.left_sidebar = self._create_left_sidebar()
+        self.center_canvas = self._create_center_canvas()
+        self.right_sidebar = self._create_right_sidebar()
 
-    def _create_left_sidebar(self):
+        main_layout.addWidget(self.left_sidebar)
+        main_layout.addWidget(self.center_canvas)
+        main_layout.addWidget(self.right_sidebar)
+
+    def _create_left_sidebar(self) -> QFrame:
         sidebar = QFrame()
         sidebar.setStyleSheet(STYLES["sidebar"])
         sidebar.setFixedWidth(300)
@@ -148,7 +158,7 @@ class MainWindow(QWidget):
 
         return sidebar
 
-    def _create_center_canvas(self):
+    def _create_center_canvas(self) -> QFrame:
         content_area = QFrame()
         content_area.setStyleSheet(STYLES["content"])
 
@@ -181,7 +191,7 @@ class MainWindow(QWidget):
 
         return content_area
 
-    def _create_right_sidebar(self):
+    def _create_right_sidebar(self) -> QFrame:
         sidebar = QFrame()
         sidebar.setStyleSheet(STYLES["right_sidebar"])
         sidebar.setFixedWidth(250)
@@ -741,10 +751,31 @@ class MainWindow(QWidget):
             self.timer_display.setText(str(self.time_left))
             return
 
+        self.pick_random_image()
+
         self.time_left = self.timer_interval
         self.timer_display.setText(str(self.time_left))
 
-        self.pick_random_image()
+    def _setup_shortcuts(self):
+        shortcut = QShortcut(QKeySequence("F"), self)
+        shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        shortcut.activated.connect(self.toggle_sidebars)
+
+    def toggle_sidebars(self):
+        """Toggle both sidebars for a fullscreen-like focus view."""
+        focused = QApplication.focusWidget()
+        if isinstance(focused, QLineEdit):
+            return
+
+        should_hide = self.left_sidebar.isVisible() or self.right_sidebar.isVisible()
+
+        self.left_sidebar.setVisible(not should_hide)
+        self.right_sidebar.setVisible(not should_hide)
+
+        # When sidebars are hidden, focus falls into a void.
+        # Force focus back to the main window so the shortcut keeps working.
+        if should_hide:
+            self.setFocus()
 
     def closeEvent(self, event):
         """Ensure all background threads are stopped before the window is destroyed."""

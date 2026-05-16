@@ -22,6 +22,10 @@ RefViewer is a fast (questionable, this is vibe coded after all), local desktop 
 - **Speed Drawing Timer:** A configurable countdown timer that loops and randomly selects a *new* image when it hits zero—perfect for gesture drawing or art practice. 
 - **Hot-Reloading:** Built-in `watchfiles` support for instant UI restarts on file save during development.
 
+## Shortcuts
+
+* F to toggle sidebars
+
 ## Setup & Development (Using `uv` & `mise`)
 
 This project uses modern Python tooling. You will need [uv](https://github.com/astral-sh/uv) and [mise](https://github.com/jdx/mise) installed on your system.
