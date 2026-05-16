@@ -40,7 +40,7 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("RefViewer")
-        self.resize(1200, 600)
+        self.setMinimumSize(1200, 600)
 
         # State Variables
         self.active_image_path = None
@@ -67,6 +67,11 @@ class MainWindow(QWidget):
         self._build_ui()
         self._setup_timer()
 
+        # Defer heavy I/O until after the window is painted
+        QTimer.singleShot(0, self._deferred_startup)
+
+    def _deferred_startup(self):
+        """Runs after the window is visible. Loads saved folder and tags."""
         self.load_saved_folder()
         self.refresh_global_tags()
 

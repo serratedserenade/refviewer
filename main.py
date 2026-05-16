@@ -9,6 +9,12 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
 
     window = MainWindow()
+
+    screen = app.primaryScreen()
+
+    if screen is not None:
+        window.setGeometry(screen.availableGeometry())
+
     window.show()
 
     sys.exit(app.exec())
