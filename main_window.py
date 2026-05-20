@@ -16,6 +16,8 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QInputDialog,
     QMessageBox,
+    QSplitter,
+    QAbstractItemView,
 )
 from PyQt6.QtGui import (
     QPixmap,
@@ -78,22 +80,38 @@ class MainWindow(QWidget):
     # ========================== UI SETUP ==========================
 
     def _build_ui(self):
-        main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-
+        # Create a horizontal splitter for resizable sidebars
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setHandleWidth(4)
+        
         self.left_sidebar = self._create_left_sidebar()
         self.center_canvas = self._create_center_canvas()
         self.right_sidebar = self._create_right_sidebar()
-
-        main_layout.addWidget(self.left_sidebar)
-        main_layout.addWidget(self.center_canvas)
-        main_layout.addWidget(self.right_sidebar)
+        
+        # Add widgets to splitter
+        self.splitter.addWidget(self.left_sidebar)
+        self.splitter.addWidget(self.center_canvas)
+        self.splitter.addWidget(self.right_sidebar)
+        
+        # Set proportional sizing using stretch factors instead of fixed pixels
+        self.splitter.setStretchFactor(0, 1)  # Left sidebar
+        self.splitter.setStretchFactor(1, 7)  # Center canvas
+        self.splitter.setStretchFactor(2, 1)  # Right sidebar
+        
+        # Set reasonable minimum widths (reduced to allow stretch factors to work)
+        self.left_sidebar.setMinimumWidth(200)
+        self.center_canvas.setMinimumWidth(400)
+        self.right_sidebar.setMinimumWidth(200)
+        
+        # Create a layout to hold the splitter
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(self.splitter)
 
     def _create_left_sidebar(self) -> QFrame:
         sidebar = QFrame()
         sidebar.setStyleSheet(STYLES["sidebar"])
-        sidebar.setFixedWidth(300)
 
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -132,6 +150,10 @@ class MainWindow(QWidget):
         self.file_list_widget = QListWidget()
         self.file_list_widget.setStyleSheet(STYLES["list"])
         self.file_list_widget.currentItemChanged.connect(self.on_file_item_changed)
+
+        self.file_list_widget.setDragEnabled(False)
+        self.file_list_widget.setDragDropMode(QAbstractItemView.DragDropMode.NoDragDrop)
+        self.file_list_widget.setAcceptDrops(False)
 
         self.file_list_widget.setSelectionMode(
             QListWidget.SelectionMode.ExtendedSelection
@@ -787,6 +809,10 @@ class MainWindow(QWidget):
         shortcut_timer = QShortcut(QKeySequence("Space"), self)
         shortcut_timer.setContext(Qt.ShortcutContext.WindowShortcut)
         shortcut_timer.activated.connect(self.toggle_timer)
+
+        shortcut_random = QShortcut(QKeySequence("R"), self)
+        shortcut_random.setContext(Qt.ShortcutContext.WindowShortcut)
+        shortcut_random.activated.connect(self.pick_random_image)
 
 
 

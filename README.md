@@ -26,6 +26,7 @@ RefViewer is a fast (questionable, this is vibe coded after all), local desktop 
 
 * F to toggle sidebars
 * Space to toggle timer start and stop. Defaults to 60 seconds if you haven't set a value yet.
+* R to randomly select another image
 
 ## Setup & Development (Using `uv` & `mise`)
 
