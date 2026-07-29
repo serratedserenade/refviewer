@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QSplitter,
     QAbstractItemView,
+    QSpinBox,
 )
 from PyQt6.QtGui import (
     QPixmap,
@@ -33,7 +34,8 @@ from PyQt6.QtCore import Qt, QTimer, QSize
 
 from config import STYLES, CACHE_DIR, TAG_ICONS, TAG_BTN_SIZE, TAG_PARSE_REGEX, APP_TIMER_DEFAULT
 from file_scanner import scan_directory
-from components.image_viewer import ScaledImageLabel, CanvasLoader
+from components.image_viewer import CanvasLoader
+from components.drawing_canvas import DrawableImageLabel, DrawingToolbar
 from components.thumbnail_loader import ThumbnailLoader
 import database
 
@@ -200,10 +202,21 @@ class MainWindow(QWidget):
         self.timer_display.hide()
         layout.addWidget(self.timer_display)
 
-        self.image_viewer = ScaledImageLabel()
+        self.drawing_toolbar = DrawingToolbar()
+        self.drawing_toolbar.draw_toggled.connect(self._on_draw_toggled)
+        self.drawing_toolbar.color_changed.connect(self._on_pen_color_changed)
+        self.drawing_toolbar.size_changed.connect(self._on_pen_size_changed)
+        self.drawing_toolbar.clear_requested.connect(self._on_clear_annotations)
+        self.drawing_toolbar.undo_requested.connect(self._on_undo_annotation)
+        self.drawing_toolbar.redo_requested.connect(self._on_redo_annotation)
+        layout.addWidget(self.drawing_toolbar)
+
+        self.image_viewer = DrawableImageLabel()
         self.image_viewer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_viewer.setText("Select a folder to begin...")
         self.image_viewer.setStyleSheet(STYLES["placeholder"])
+        self.image_viewer.set_pen_color(self.drawing_toolbar.pen_color)
+        self.image_viewer.set_pen_width(self.drawing_toolbar.size_spin.value())
         layout.addWidget(self.image_viewer)
 
         self.current_image_path_label = QLabel("")
@@ -224,9 +237,10 @@ class MainWindow(QWidget):
         layout.addWidget(self.bubble_container)
 
         layout.setStretch(0, 0)
-        layout.setStretch(1, 1)
-        layout.setStretch(2, 0)
+        layout.setStretch(1, 0)
+        layout.setStretch(2, 1)
         layout.setStretch(3, 0)
+        layout.setStretch(4, 0)
 
         return content_area
 
@@ -321,6 +335,7 @@ class MainWindow(QWidget):
         self.file_list_widget.clear()
         self.clear_bubbles()
         self.current_image_path_label.setText("")
+        self.image_viewer.reset_image()
         self.active_image_path = None
         self.active_filter_tag = None
         self.tag_list_widget.clearSelection()
@@ -526,6 +541,7 @@ class MainWindow(QWidget):
         if img.isNull():
             self.image_viewer.setText("Failed to load image file.")
             self.image_viewer.setStyleSheet(STYLES["error"])
+            self.image_viewer.reset_image()
             self.clear_bubbles()
         else:
             pixmap = QPixmap.fromImage(img)
@@ -542,6 +558,30 @@ class MainWindow(QWidget):
     def on_selection_changed(self):
         """Refreshes the right sidebar whenever you Shift+Click multiple items."""
         self.refresh_global_tags()
+
+    # ========================== ANNOTATIONS ==========================
+    # NOTE: Annotations are a purely visual, in-session overlay for marking up
+    # reference images (e.g. pointing out proportions or lighting notes). They
+    # are never written back to the image file and are wiped whenever a new
+    # image is loaded (see DrawableImageLabel.set_image).
+
+    def _on_draw_toggled(self, enabled):
+        self.image_viewer.set_drawing_enabled(enabled)
+
+    def _on_pen_color_changed(self, color):
+        self.image_viewer.set_pen_color(color)
+
+    def _on_pen_size_changed(self, size):
+        self.image_viewer.set_pen_width(size)
+
+    def _on_clear_annotations(self):
+        self.image_viewer.clear_annotations()
+
+    def _on_undo_annotation(self):
+        self.image_viewer.undo_last_stroke()
+
+    def _on_redo_annotation(self):
+        self.image_viewer.redo_last_stroke()
 
     # ========================== TAG MANAGEMENT ==========================
 
@@ -828,14 +868,35 @@ class MainWindow(QWidget):
         shortcut_random.setContext(Qt.ShortcutContext.WindowShortcut)
         shortcut_random.activated.connect(self.pick_random_image)
 
+        shortcut_undo = QShortcut(QKeySequence("Ctrl+Z"), self)
+        shortcut_undo.setContext(Qt.ShortcutContext.WindowShortcut)
+        shortcut_undo.activated.connect(self._on_undo_shortcut)
 
+        shortcut_redo = QShortcut(QKeySequence("Ctrl+Shift+Z"), self)
+        shortcut_redo.setContext(Qt.ShortcutContext.WindowShortcut)
+        shortcut_redo.activated.connect(self._on_redo_shortcut)
+
+
+
+    def _is_text_editing_focused(self) -> bool:
+        """True when a text-entry widget currently has focus, so global
+        keyboard shortcuts (like Ctrl+Z) don't hijack native text undo/redo."""
+        focused = QApplication.focusWidget()
+        return isinstance(focused, (QLineEdit, QSpinBox))
+
+    def _on_undo_shortcut(self):
+        if not self._is_text_editing_focused():
+            self._on_undo_annotation()
+
+    def _on_redo_shortcut(self):
+        if not self._is_text_editing_focused():
+            self._on_redo_annotation()
 
     def toggle_ui_visibility(self):
         """Toggle both sidebars for a fullscreen-like focus view."""
         focused = QApplication.focusWidget()
         if isinstance(focused, QLineEdit):
             return
-
         should_hide = self.left_sidebar.isVisible() or self.right_sidebar.isVisible()
 
         self.left_sidebar.setVisible(not should_hide)

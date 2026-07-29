@@ -40,6 +40,21 @@ TAG_ICONS = {"rename": "✏️", "delete": "🗑️", "add": "+", "remove": "−
 TAG_BTN_SIZE = 20
 TAG_PARSE_REGEX = r"^(.*)\s\(\d+\)$"
 
+# ==============================================================================
+# Drawing / Annotation Tool Settings
+# ==============================================================================
+# Annotations are a purely transient, in-session overlay (see components/drawing_canvas.py).
+# They are never saved to disk or the database, so these are just UI defaults/bounds.
+DRAWING_ICONS = {"draw_off": "✏️ Draw", "draw_on": "✏️ Drawing"}
+
+DEFAULT_PEN_COLOR = "#e74c3c"
+DEFAULT_PEN_WIDTH = 4
+PEN_WIDTH_MIN = 1
+PEN_WIDTH_MAX = 100
+
+PEN_SIZE_SPINBOX_WIDTH = 55
+COLOR_SWATCH_SIZE = 24
+
 STYLES = {
     "sidebar": "background-color: #2c3e50;",
     "right_sidebar": "background-color: #34495e;",
@@ -84,4 +99,28 @@ STYLES = {
         QPushButton:hover { background-color: #2ecc71; }
     """,
     "current_path_label": "color: white; font-size: 12px; font-weight: bold; background: transparent;",
+    "tool_toggle_btn": """
+        QToolButton { background-color: #1a252f; color: #ecf0f1; font-weight: bold;
+                      border: 1px solid #34495e; border-radius: 4px; padding: 4px 10px; }
+        QToolButton:hover { background-color: #2c3e50; }
+        QToolButton:checked { background-color: #2980b9; border-color: #2980b9; }
+    """,
+    "color_swatch_btn": "background-color: {color}; border: 1px solid #7f8c8d; border-radius: 3px;",
+    "spinbox": """
+        QSpinBox { background-color: #1a252f; color: #ecf0f1;
+                   border: 1px solid #2c3e50; border-radius: 4px; padding: 2px 4px; }
+        QSpinBox::up-button, QSpinBox::down-button { background-color: #2c3e50; border: none; width: 14px; }
+        QSpinBox::up-arrow, QSpinBox::down-arrow { width: 8px; height: 8px; }
+    """,
+    "color_dialog": """
+        QColorDialog { background-color: #2c3e50; }
+        QColorDialog QLabel { color: #ecf0f1; background: transparent; }
+        QColorDialog QLineEdit { background-color: #1a252f; color: #ecf0f1;
+                                  border: 1px solid #34495e; border-radius: 3px; padding: 2px; }
+        QColorDialog QSpinBox { background-color: #1a252f; color: #ecf0f1;
+                                 border: 1px solid #34495e; border-radius: 3px; }
+        QColorDialog QPushButton { background-color: white; color: #2c3e50; font-weight: bold;
+                                    border: 1px solid #bdc3c7; border-radius: 4px; padding: 4px 12px; }
+        QColorDialog QPushButton:hover { background-color: #ecf0f1; }
+    """,
 }
