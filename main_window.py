@@ -919,6 +919,8 @@ class MainWindow(QWidget):
         self.left_sidebar.setVisible(not should_hide)
         self.right_sidebar.setVisible(not should_hide)
         self.bubble_container.setVisible(not should_hide)
+        self.current_image_path_label.setVisible(not should_hide)
+        self.drawing_toolbar.setVisible(not should_hide)
 
         # When sidebars are hidden, focus falls into a void.
         # Force focus back to the main window so the shortcut keeps working.

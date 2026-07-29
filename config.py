@@ -56,6 +56,22 @@ PEN_WIDTH_MAX = 100
 PEN_SIZE_SPINBOX_WIDTH = 55
 COLOR_SWATCH_SIZE = 24
 
+# Quick-access presets shown as their own swatches/buttons on the toolbar.
+QUICK_PEN_COLORS = {
+    "Red": "#e74c3c",
+    "Blue": "#2980b9",
+    "Yellow": "#f1c40f",
+    "Green": "#27ae60",
+    "Pink": "#e84393",
+    "Orange": "#e67e22",
+    "Cyan": "#00cec9",
+}
+QUICK_PEN_ALPHA = 150  # 0-255; applied to every QUICK_PEN_COLORS swatch
+QUICK_COLOR_SWATCH_SIZE = 20
+
+QUICK_PEN_SIZES = [1, 2, 5, 10, 20]
+QUICK_SIZE_BTN_WIDTH = 26
+
 STYLES = {
     "sidebar": "background-color: #2c3e50;",
     "right_sidebar": "background-color: #34495e;",
@@ -123,5 +139,15 @@ STYLES = {
         QColorDialog QPushButton { background-color: white; color: #2c3e50; font-weight: bold;
                                     border: 1px solid #bdc3c7; border-radius: 4px; padding: 4px 12px; }
         QColorDialog QPushButton:hover { background-color: #ecf0f1; }
+    """,
+    "quick_color_swatch": """
+        QPushButton { background-color: {color}; border: 1px solid #7f8c8d; border-radius: 3px; }
+        QPushButton:hover { border: 1px solid #ecf0f1; }
+    """,
+    "quick_size_btn": """
+        QPushButton { background-color: #1a252f; color: #ecf0f1; font-size: 10px;
+                      border: 1px solid #34495e; border-radius: 4px; padding: 2px; }
+        QPushButton:hover { background-color: #2c3e50; }
+        QPushButton:pressed { background-color: #2980b9; }
     """,
 }

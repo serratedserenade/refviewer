@@ -21,6 +21,11 @@ from config import (
     PEN_WIDTH_MAX,
     PEN_SIZE_SPINBOX_WIDTH,
     COLOR_SWATCH_SIZE,
+    QUICK_PEN_COLORS,
+    QUICK_PEN_ALPHA,
+    QUICK_COLOR_SWATCH_SIZE,
+    QUICK_PEN_SIZES,
+    QUICK_SIZE_BTN_WIDTH,
 )
 
 
@@ -285,6 +290,37 @@ class DrawingToolbar(QWidget):
         layout.addWidget(self.clear_btn)
 
         layout.addStretch()
+
+        # -------------------- Right-aligned quick presets --------------------
+        for size in QUICK_PEN_SIZES:
+            size_btn = QPushButton(str(size))
+            size_btn.setFixedWidth(QUICK_SIZE_BTN_WIDTH)
+            size_btn.setToolTip(f"Pen size {size}")
+            size_btn.setStyleSheet(STYLES["quick_size_btn"])
+            size_btn.clicked.connect(lambda _checked=False, s=size: self.size_spin.setValue(s))
+            layout.addWidget(size_btn)
+
+        for name, hex_color in QUICK_PEN_COLORS.items():
+            swatch_color = QColor(hex_color)
+            swatch_color.setAlpha(QUICK_PEN_ALPHA)
+
+            swatch_btn = QPushButton()
+            swatch_btn.setFixedSize(QUICK_COLOR_SWATCH_SIZE, QUICK_COLOR_SWATCH_SIZE)
+            swatch_btn.setToolTip(name)
+            rgba = (
+                f"rgba({swatch_color.red()}, {swatch_color.green()}, "
+                f"{swatch_color.blue()}, {swatch_color.alphaF():.3f})"
+            )
+            swatch_btn.setStyleSheet(
+                STYLES["quick_color_swatch"].replace("{color}", rgba)
+            )
+            swatch_btn.clicked.connect(lambda _checked=False, c=swatch_color: self._select_quick_color(c))
+            layout.addWidget(swatch_btn)
+
+    def _select_quick_color(self, color: QColor):
+        self.pen_color = QColor(color)
+        self._update_color_btn()
+        self.color_changed.emit(self.pen_color)
 
     def _on_draw_toggled(self, checked: bool):
         self.draw_btn.setText(
