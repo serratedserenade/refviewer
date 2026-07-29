@@ -243,6 +243,9 @@ class DrawingToolbar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.pen_color = _default_pen_color()
+        # Every control except `draw_btn` itself is only useful while the pen
+        # tool is active, so we hide them all until drawing mode is toggled on.
+        self._drawing_only_controls: list[QWidget] = []
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 6)
@@ -258,6 +261,7 @@ class DrawingToolbar(QWidget):
         size_label = QLabel("Size:")
         size_label.setStyleSheet(STYLES["tag_row_label"])
         layout.addWidget(size_label)
+        self._drawing_only_controls.append(size_label)
 
         self.size_spin = QSpinBox()
         self.size_spin.setRange(PEN_WIDTH_MIN, PEN_WIDTH_MAX)
@@ -266,6 +270,7 @@ class DrawingToolbar(QWidget):
         self.size_spin.setStyleSheet(STYLES["spinbox"])
         self.size_spin.valueChanged.connect(self.size_changed.emit)
         layout.addWidget(self.size_spin)
+        self._drawing_only_controls.append(self.size_spin)
 
         self.color_btn = QPushButton()
         self.color_btn.setFixedSize(COLOR_SWATCH_SIZE, COLOR_SWATCH_SIZE)
@@ -273,21 +278,28 @@ class DrawingToolbar(QWidget):
         self.color_btn.clicked.connect(self._pick_color)
         self._update_color_btn()
         layout.addWidget(self.color_btn)
+        self._drawing_only_controls.append(self.color_btn)
 
-        self.undo_btn = QPushButton("Undo")
+        self.undo_btn = QPushButton(DRAWING_ICONS["undo"])
+        self.undo_btn.setToolTip("Undo last stroke (Ctrl+Z)")
         self.undo_btn.setStyleSheet(STYLES["button"])
         self.undo_btn.clicked.connect(self.undo_requested.emit)
         layout.addWidget(self.undo_btn)
+        self._drawing_only_controls.append(self.undo_btn)
 
-        self.redo_btn = QPushButton("Redo")
+        self.redo_btn = QPushButton(DRAWING_ICONS["redo"])
+        self.redo_btn.setToolTip("Redo last stroke (Ctrl+Shift+Z)")
         self.redo_btn.setStyleSheet(STYLES["button"])
         self.redo_btn.clicked.connect(self.redo_requested.emit)
         layout.addWidget(self.redo_btn)
+        self._drawing_only_controls.append(self.redo_btn)
 
-        self.clear_btn = QPushButton("Clear")
+        self.clear_btn = QPushButton(DRAWING_ICONS["clear"])
+        self.clear_btn.setToolTip("Clear all annotations")
         self.clear_btn.setStyleSheet(STYLES["button"])
         self.clear_btn.clicked.connect(self.clear_requested.emit)
         layout.addWidget(self.clear_btn)
+        self._drawing_only_controls.append(self.clear_btn)
 
         layout.addStretch()
 
@@ -299,6 +311,7 @@ class DrawingToolbar(QWidget):
             size_btn.setStyleSheet(STYLES["quick_size_btn"])
             size_btn.clicked.connect(lambda _checked=False, s=size: self.size_spin.setValue(s))
             layout.addWidget(size_btn)
+            self._drawing_only_controls.append(size_btn)
 
         for name, hex_color in QUICK_PEN_COLORS.items():
             swatch_color = QColor(hex_color)
@@ -316,6 +329,14 @@ class DrawingToolbar(QWidget):
             )
             swatch_btn.clicked.connect(lambda _checked=False, c=swatch_color: self._select_quick_color(c))
             layout.addWidget(swatch_btn)
+            self._drawing_only_controls.append(swatch_btn)
+
+        # Drawing mode starts disabled, so hide everything but the toggle itself.
+        self._set_controls_visible(False)
+
+    def _set_controls_visible(self, visible: bool):
+        for widget in self._drawing_only_controls:
+            widget.setVisible(visible)
 
     def _select_quick_color(self, color: QColor):
         self.pen_color = QColor(color)
@@ -326,6 +347,7 @@ class DrawingToolbar(QWidget):
         self.draw_btn.setText(
             DRAWING_ICONS["draw_on"] if checked else DRAWING_ICONS["draw_off"]
         )
+        self._set_controls_visible(checked)
         self.draw_toggled.emit(checked)
 
     def _pick_color(self):

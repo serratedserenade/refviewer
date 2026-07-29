@@ -45,7 +45,13 @@ TAG_PARSE_REGEX = r"^(.*)\s\(\d+\)$"
 # ==============================================================================
 # Annotations are a purely transient, in-session overlay (see components/drawing_canvas.py).
 # They are never saved to disk or the database, so these are just UI defaults/bounds.
-DRAWING_ICONS = {"draw_off": "✏️ Draw", "draw_on": "✏️ Drawing"}
+DRAWING_ICONS = {
+    "draw_off": "✏️ Draw",
+    "draw_on": "✏️ Drawing",
+    "undo": "↩️",
+    "redo": "↪️",
+    "clear": "🧹",
+}
 
 DEFAULT_PEN_COLOR = "#e74c3c"
 DEFAULT_PEN_ALPHA = 150  # 0-255; applied to DEFAULT_PEN_COLOR on startup
