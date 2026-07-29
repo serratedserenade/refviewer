@@ -65,10 +65,18 @@ DEFAULT_PEN_COLOR = "#ff0000"
 DEFAULT_PEN_ALPHA = 150  # 0-255; applied to DEFAULT_PEN_COLOR on startup
 DEFAULT_PEN_WIDTH = 10
 PEN_WIDTH_MIN = 1
-PEN_WIDTH_MAX = 100
+PEN_WIDTH_MAX = 50
 
 PEN_SIZE_SPINBOX_WIDTH = 55
+SIZE_SLIDER_WIDTH = 80
 COLOR_SWATCH_SIZE = 24
+
+# Opacity is exposed to the user as a 0-100% value, translated internally to
+# the 0-255 alpha range QColor actually uses.
+PEN_OPACITY_PERCENT_MIN = 0
+PEN_OPACITY_PERCENT_MAX = 100
+OPACITY_SPINBOX_WIDTH = 55
+OPACITY_SLIDER_WIDTH = 80
 
 # Quick-access presets shown as their own swatches/buttons on the toolbar.
 QUICK_PEN_COLORS = {
@@ -164,8 +172,16 @@ STYLES = {
         QPushButton:hover { background-color: #2c3e50; }
         QPushButton:pressed { background-color: #2980b9; }
     """,
+    "slider": """
+        QSlider::groove:horizontal { background-color: #1a252f; height: 4px; border-radius: 2px; }
+        QSlider::handle:horizontal { background-color: #2980b9; width: 12px; margin: -5px 0; border-radius: 6px; }
+        QSlider::handle:horizontal:hover { background-color: #3498db; }
+    """,
     "tab_widget": """
+        QTabWidget { background-color: #000000; }
         QTabWidget::pane { border: none; background-color: #2c3e50; top: -1px; }
+        QTabWidget::tab-bar { background-color: #000000; }
+        QTabBar { background-color: #000000; border: none; }
         QTabBar::tab { background-color: #1a252f; color: #ecf0f1; padding: 6px 14px;
                        border: 1px solid #34495e; border-bottom: none;
                        border-top-left-radius: 4px; border-top-right-radius: 4px; }

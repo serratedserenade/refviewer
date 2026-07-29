@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QToolButton,
     QSpinBox,
+    QSlider,
     QPushButton,
     QColorDialog,
 )
@@ -20,7 +21,12 @@ from config import (
     PEN_WIDTH_MIN,
     PEN_WIDTH_MAX,
     PEN_SIZE_SPINBOX_WIDTH,
+    SIZE_SLIDER_WIDTH,
     COLOR_SWATCH_SIZE,
+    PEN_OPACITY_PERCENT_MIN,
+    PEN_OPACITY_PERCENT_MAX,
+    OPACITY_SPINBOX_WIDTH,
+    OPACITY_SLIDER_WIDTH,
     QUICK_PEN_COLORS,
     QUICK_PEN_ALPHA,
     QUICK_COLOR_SWATCH_SIZE,
@@ -268,9 +274,49 @@ class DrawingToolbar(QWidget):
         self.size_spin.setValue(DEFAULT_PEN_WIDTH)
         self.size_spin.setFixedWidth(PEN_SIZE_SPINBOX_WIDTH)
         self.size_spin.setStyleSheet(STYLES["spinbox"])
-        self.size_spin.valueChanged.connect(self.size_changed.emit)
         layout.addWidget(self.size_spin)
         self._drawing_only_controls.append(self.size_spin)
+
+        self.size_slider = QSlider(Qt.Orientation.Horizontal)
+        self.size_slider.setRange(PEN_WIDTH_MIN, PEN_WIDTH_MAX)
+        self.size_slider.setValue(DEFAULT_PEN_WIDTH)
+        self.size_slider.setFixedWidth(SIZE_SLIDER_WIDTH)
+        self.size_slider.setStyleSheet(STYLES["slider"])
+        layout.addWidget(self.size_slider)
+        self._drawing_only_controls.append(self.size_slider)
+
+        # Keep the spinbox and slider in lockstep, and forward the
+        # resulting value out to whoever's listening (DrawableImageLabel).
+        self.size_spin.valueChanged.connect(self.size_slider.setValue)
+        self.size_slider.valueChanged.connect(self.size_spin.setValue)
+        self.size_spin.valueChanged.connect(self.size_changed.emit)
+
+        opacity_label = QLabel("Opacity:")
+        opacity_label.setStyleSheet(STYLES["tag_row_label"])
+        layout.addWidget(opacity_label)
+        self._drawing_only_controls.append(opacity_label)
+
+        self.opacity_spin = QSpinBox()
+        self.opacity_spin.setRange(PEN_OPACITY_PERCENT_MIN, PEN_OPACITY_PERCENT_MAX)
+        self.opacity_spin.setSuffix("%")
+        self.opacity_spin.setFixedWidth(OPACITY_SPINBOX_WIDTH)
+        self.opacity_spin.setStyleSheet(STYLES["spinbox"])
+        layout.addWidget(self.opacity_spin)
+        self._drawing_only_controls.append(self.opacity_spin)
+
+        self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.opacity_slider.setRange(PEN_OPACITY_PERCENT_MIN, PEN_OPACITY_PERCENT_MAX)
+        self.opacity_slider.setFixedWidth(OPACITY_SLIDER_WIDTH)
+        self.opacity_slider.setStyleSheet(STYLES["slider"])
+        layout.addWidget(self.opacity_slider)
+        self._drawing_only_controls.append(self.opacity_slider)
+
+        self.opacity_spin.valueChanged.connect(self.opacity_slider.setValue)
+        self.opacity_slider.valueChanged.connect(self.opacity_spin.setValue)
+        self.opacity_spin.valueChanged.connect(self._on_opacity_percent_changed)
+
+        # Initialize the opacity controls to match the starting pen_color's alpha.
+        self._set_opacity_percent(round(self.pen_color.alpha() / 255 * 100))
 
         self.color_btn = QPushButton()
         self.color_btn.setFixedSize(COLOR_SWATCH_SIZE, COLOR_SWATCH_SIZE)
@@ -341,6 +387,7 @@ class DrawingToolbar(QWidget):
     def _select_quick_color(self, color: QColor):
         self.pen_color = QColor(color)
         self._update_color_btn()
+        self._set_opacity_percent(round(self.pen_color.alpha() / 255 * 100))
         self.color_changed.emit(self.pen_color)
 
     def _on_draw_toggled(self, checked: bool):
@@ -360,7 +407,28 @@ class DrawingToolbar(QWidget):
             if color.isValid():
                 self.pen_color = color
                 self._update_color_btn()
+                self._set_opacity_percent(round(color.alpha() / 255 * 100))
                 self.color_changed.emit(color)
+
+    def _on_opacity_percent_changed(self, percent: int):
+        """Opacity is exposed to the user as 0-100%, translated here to the
+        0-255 alpha value QColor actually stores."""
+        alpha = round(percent / 100 * 255)
+        self.pen_color.setAlpha(alpha)
+        self._update_color_btn()
+        self.color_changed.emit(self.pen_color)
+
+    def _set_opacity_percent(self, percent: int):
+        """Syncs the opacity spinbox/slider without re-triggering
+        _on_opacity_percent_changed (avoids redundant color_changed emits
+        when we're the ones setting pen_color, e.g. from the color dialog
+        or a quick-color swatch)."""
+        self.opacity_spin.blockSignals(True)
+        self.opacity_slider.blockSignals(True)
+        self.opacity_spin.setValue(percent)
+        self.opacity_slider.setValue(percent)
+        self.opacity_spin.blockSignals(False)
+        self.opacity_slider.blockSignals(False)
 
     def _update_color_btn(self):
         c = self.pen_color
