@@ -48,7 +48,8 @@ TAG_PARSE_REGEX = r"^(.*)\s\(\d+\)$"
 DRAWING_ICONS = {"draw_off": "✏️ Draw", "draw_on": "✏️ Drawing"}
 
 DEFAULT_PEN_COLOR = "#e74c3c"
-DEFAULT_PEN_WIDTH = 4
+DEFAULT_PEN_ALPHA = 150  # 0-255; applied to DEFAULT_PEN_COLOR on startup
+DEFAULT_PEN_WIDTH = 10
 PEN_WIDTH_MIN = 1
 PEN_WIDTH_MAX = 100
 

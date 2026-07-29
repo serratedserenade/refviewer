@@ -15,12 +15,19 @@ from config import (
     STYLES,
     DRAWING_ICONS,
     DEFAULT_PEN_COLOR,
+    DEFAULT_PEN_ALPHA,
     DEFAULT_PEN_WIDTH,
     PEN_WIDTH_MIN,
     PEN_WIDTH_MAX,
     PEN_SIZE_SPINBOX_WIDTH,
     COLOR_SWATCH_SIZE,
 )
+
+
+def _default_pen_color() -> QColor:
+    color = QColor(DEFAULT_PEN_COLOR)
+    color.setAlpha(DEFAULT_PEN_ALPHA)
+    return color
 
 
 class DrawableImageLabel(QLabel):
@@ -42,7 +49,7 @@ class DrawableImageLabel(QLabel):
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
 
         self.drawing_enabled = False
-        self.pen_color = QColor(DEFAULT_PEN_COLOR)
+        self.pen_color = _default_pen_color()
         self.pen_width = DEFAULT_PEN_WIDTH
 
         self.strokes: list[dict] = []  # committed strokes
@@ -230,7 +237,7 @@ class DrawingToolbar(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.pen_color = QColor(DEFAULT_PEN_COLOR)
+        self.pen_color = _default_pen_color()
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 6)
