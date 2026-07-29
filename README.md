@@ -19,6 +19,8 @@ RefViewer is a fast (questionable, this is vibe coded after all), local desktop 
 - **Cross-Folder Filtering:** Click a tag to instantly see all images associated with that tag, even if they live outside your currently selected folder (outlined in yellow).
 - **Blazing Fast, Uncapped Rendering:** Multi-threaded background thumbnail generation. Image decoding allocation limits are completely disabled to support massive, high-res canvas files without crashing.
 - **EXIF Aware:** Automatically reads EXIF metadata to ensure phone/camera photos aren't rotated sideways.
+- **Pen Annotations:** Draw directly on top of the currently viewed image with a configurable pen color and size — great for pointing out proportions, lighting notes, or gesture lines. Fully non-destructive: annotations are never saved to the image file or database, and are automatically cleared the moment you switch images or close the app. Supports Undo/Redo (`Ctrl+Z` / `Ctrl+Shift+Z`).
+- **Filepath Display:** The full path of the currently viewed image is shown above the tag chips, and the text is selectable for easy copying.
 - **Speed Drawing Timer:** A configurable countdown timer that loops and randomly selects a *new* image when it hits zero—perfect for gesture drawing or art practice. 
 - **Hot-Reloading:** Built-in `watchfiles` support for instant UI restarts on file save during development.
 
@@ -27,6 +29,7 @@ RefViewer is a fast (questionable, this is vibe coded after all), local desktop 
 * F to toggle sidebars
 * Space to toggle timer start and stop. Defaults to 60 seconds if you haven't set a value yet.
 * R to randomly select another image
+* Ctrl+Z / Ctrl+Shift+Z to undo/redo pen annotations (ignored while typing in a text field)
 
 ## Setup & Development (Using `uv` & `mise`)
 
@@ -85,6 +88,7 @@ Project Structure
     ┣ components/
     ┃ ┣ __init__.py
     ┃ ┣ image_viewer.py        # Central canvas rendering, handles EXIF & limits
+    ┃ ┣ drawing_canvas.py      # Non-destructive pen annotation overlay & toolbar
     ┃ ┗ thumbnail_loader.py    # Multi-threaded concurrent cache generation
     ┣ config.py                # UI Styling and dynamic cross-platform paths
     ┣ database.py              # SQLite3 data management & tag schema
