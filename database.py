@@ -171,17 +171,37 @@ def remove_tag_from_image(filepath: str, tag_name: str):
             )
         """)
 
-def get_images_by_tag(tag_name: str) -> list[str]:
+def get_images_by_tags(tag_names: list[str], match_all: bool) -> list[str]:
+    """Returns filepaths tagged with all of `tag_names`, or any of them.
+
+    `match_all` selects between AND and OR semantics. No chunking here: the
+    parameter count is bounded by how many tags the user can check, which stays
+    far below SQL_PARAM_CHUNK.
+    """
+    if not tag_names:
+        return []
+
     with _get_connection() as conn:
-        cursor = conn.execute(
-            """
+        placeholders = ", ".join("?" for _ in tag_names)
+        # GROUP BY collapses the one-row-per-tag join back to one row per image,
+        # which also deduplicates the OR case.
+        query = f"""
             SELECT images.filepath FROM images
             JOIN image_tags ON images.id = image_tags.image_id
             JOIN tags ON tags.id = image_tags.tag_id
-            WHERE tags.name = ?
-        """,
-            (tag_name,),
-        )
+            WHERE tags.name IN ({placeholders})
+            GROUP BY images.id
+        """
+        params: list = list(tag_names)
+
+        if match_all:
+            # An image matched every tag only if it contributed a row for each.
+            query += " HAVING COUNT(DISTINCT tags.name) = ?"
+            params.append(len(tag_names))
+
+        query += " ORDER BY images.filepath ASC"
+
+        cursor = conn.execute(query, params)
         return [row[0] for row in cursor.fetchall()]
 
 

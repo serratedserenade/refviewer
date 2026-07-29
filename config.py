@@ -41,6 +41,16 @@ TAG_BTN_SIZE = 20
 # Matches the trailing image count in a formatted tag string, e.g. "portrait (12)".
 TAG_PARSE_REGEX = r"^(.*)\s\(\d+\)$"
 
+# How multiple checked tags combine when filtering the image list.
+TAG_FILTER_MODE_AND = "AND"
+TAG_FILTER_MODE_OR = "OR"
+TAG_FILTER_MODES = (TAG_FILTER_MODE_AND, TAG_FILTER_MODE_OR)
+DEFAULT_TAG_FILTER_MODE = TAG_FILTER_MODE_AND
+TAG_FILTER_MODE_TOOLTIPS = {
+    TAG_FILTER_MODE_AND: "Show only images carrying every checked tag",
+    TAG_FILTER_MODE_OR: "Show images carrying at least one checked tag",
+}
+
 # ==============================================================================
 # File List Thumbnails (Left Sidebar "Images" Tab)
 # ==============================================================================
@@ -146,6 +156,24 @@ STYLES = {
                  border-radius: 10px; padding: 4px 10px; margin-right: 5px; }
     """,
     "tag_row_label": "color: white; background: transparent; font-size: 11px;",
+    "tag_checkbox": """
+        QCheckBox { background: transparent; spacing: 0px; }
+        QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid #7f8c8d;
+                               border-radius: 3px; background-color: #1a252f; }
+        QCheckBox::indicator:hover { border-color: #ecf0f1; }
+        QCheckBox::indicator:checked { background-color: #2980b9; border-color: #2980b9; }
+    """,
+    # The native indicator is dark-on-dark here, so both states are drawn
+    # explicitly to keep the unchecked option visible.
+    "radio": """
+        QRadioButton { color: #ecf0f1; font-size: 11px; font-weight: bold;
+                       background: transparent; spacing: 5px; }
+        QRadioButton::indicator { width: 11px; height: 11px; border-radius: 6px;
+                                  border: 1px solid #7f8c8d; background-color: #1a252f; }
+        QRadioButton::indicator:hover { border-color: #ecf0f1; }
+        QRadioButton::indicator:checked { background-color: #2980b9;
+                                          border-color: #2980b9; }
+    """,
     "tag_btn_action": """
         QPushButton { background: transparent; border: none; } 
         QPushButton:hover { background: #34495e; border-radius: 3px; }

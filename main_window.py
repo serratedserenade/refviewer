@@ -21,6 +21,9 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QAbstractSpinBox,
     QTabWidget,
+    QCheckBox,
+    QRadioButton,
+    QButtonGroup,
 )
 from PyQt6.QtGui import (
     QPixmap,
@@ -42,6 +45,10 @@ from config import (
     TAG_ICONS,
     TAG_BTN_SIZE,
     TAG_PARSE_REGEX,
+    TAG_FILTER_MODES,
+    TAG_FILTER_MODE_AND,
+    TAG_FILTER_MODE_TOOLTIPS,
+    DEFAULT_TAG_FILTER_MODE,
     APP_TIMER_DEFAULT,
     THUMBNAIL_SIZE,
     THUMBNAIL_GRID_SIZE,
@@ -69,8 +76,15 @@ class MainWindow(QWidget):
         self.active_image_path = None
         # Every image found by the last folder scan, regardless of filtering.
         self.scanned_files = []
-        # Tag currently filtering the file list, or None when unfiltered.
+        # Two mutually exclusive ways to filter by tag: clicking a single tag
+        # row, or ticking any number of checkboxes. Whichever is used last wins,
+        # so only one of these is ever non-empty.
         self.active_filter_tag = None
+        self.checked_tags: set[str] = set()
+        self.tag_filter_mode = DEFAULT_TAG_FILTER_MODE
+        # Live checkbox widgets by tag name, rebuilt with the tag list. Lets the
+        # boxes be cleared without destroying the rows mid-click.
+        self._tag_checkboxes: dict[str, QCheckBox] = {}
         self.is_icon_view = True
         self.show_labels = False
         self.thumb_loader = None
@@ -372,9 +386,11 @@ class MainWindow(QWidget):
         # Tag List
         layout.addWidget(
             self._create_styled_label(
-                "All Database Tags\n(Click to Filter, Double-click to Assign):"
+                "All Database Tags\n(Click to Filter, Tick to Combine):"
             )
         )
+        layout.addLayout(self._create_tag_filter_mode_row())
+
         self.tag_list_widget = QListWidget()
         self.tag_list_widget.setStyleSheet(STYLES["list"])
         self.tag_list_widget.itemClicked.connect(self.on_tag_item_clicked)
@@ -382,6 +398,42 @@ class MainWindow(QWidget):
         layout.addWidget(self.tag_list_widget)
 
         return sidebar
+
+    def _create_tag_filter_mode_row(self) -> QHBoxLayout:
+        """Builds the AND/OR radio row governing how checked tags combine."""
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 4)
+        row.setSpacing(8)
+
+        label = QLabel("Match:")
+        label.setStyleSheet(STYLES["tag_row_label"])
+        row.addWidget(label)
+
+        # Grouped so the radios are mutually exclusive and report as one signal.
+        self.tag_filter_mode_group = QButtonGroup(self)
+        for mode in TAG_FILTER_MODES:
+            radio = QRadioButton(mode)
+            radio.setStyleSheet(STYLES["radio"])
+            radio.setToolTip(TAG_FILTER_MODE_TOOLTIPS[mode])
+            radio.setChecked(mode == self.tag_filter_mode)
+            radio.toggled.connect(
+                lambda checked, m=mode: self._on_tag_filter_mode_changed(m, checked)
+            )
+            self.tag_filter_mode_group.addButton(radio)
+            row.addWidget(radio)
+
+        row.addStretch()
+        return row
+
+    def _on_tag_filter_mode_changed(self, mode: str, checked: bool):
+        # toggled fires for the radio being cleared as well as the one being set.
+        if not checked:
+            return
+
+        self.tag_filter_mode = mode
+        # Only changes the result set once more than one tag is checked.
+        if len(self.checked_tags) > 1:
+            self.update_file_list()
 
     def _create_styled_label(self, text):
         lbl = QLabel(text)
@@ -477,11 +529,13 @@ class MainWindow(QWidget):
 
         # A tag filter draws from the whole database, so it can return images
         # from outside the scanned folder; otherwise use the scan directly.
-        display_files = (
-            database.get_images_by_tag(self.active_filter_tag)
-            if self.active_filter_tag
-            else self.scanned_files
-        )
+        filter_tags = self._active_filter_tags()
+        if filter_tags:
+            display_files = database.get_images_by_tags(
+                filter_tags, match_all=self.tag_filter_mode == TAG_FILTER_MODE_AND
+            )
+        else:
+            display_files = self.scanned_files
 
         # Tagged paths are absolute and may since have been moved or deleted.
         display_files = [f for f in display_files if os.path.isfile(f)]
@@ -504,6 +558,9 @@ class MainWindow(QWidget):
 
             item = QListWidgetItem(display_text)
             item.setData(Qt.ItemDataRole.UserRole, file_path)
+            # Always the full path, since icon mode usually shows no text and
+            # list mode elides long paths.
+            item.setToolTip(file_path)
 
             if self.is_icon_view:
                 item.setSizeHint(grid_size)
@@ -769,6 +826,12 @@ class MainWindow(QWidget):
             if self.active_filter_tag == old_name:
                 self.active_filter_tag = clean_name
 
+            # Discard rather than rename: the target may already be checked, and
+            # renaming can merge two tags into one.
+            if old_name in self.checked_tags:
+                self.checked_tags.discard(old_name)
+                self.checked_tags.add(clean_name)
+
             self.refresh_global_tags()
             self.refresh_assigned_bubbles()
             self.update_file_list()
@@ -788,6 +851,7 @@ class MainWindow(QWidget):
             # Drop the filter, or the list would keep showing a deleted tag.
             if self.active_filter_tag == tag_name:
                 self.active_filter_tag = None
+            self.checked_tags.discard(tag_name)
 
             self.refresh_global_tags()
             self.refresh_assigned_bubbles()
@@ -814,8 +878,13 @@ class MainWindow(QWidget):
             self.update_file_list()
 
     def on_tag_item_clicked(self, item):
-        """Applies the clicked tag as the list filter, or clears it if re-clicked."""
+        """Filters by the clicked tag alone, or clears the filter if re-clicked.
+
+        A click always abandons the checkbox filter, so the two never combine.
+        """
         tag_name = item.data(Qt.ItemDataRole.UserRole)
+
+        self._clear_tag_checkboxes()
 
         if self.active_filter_tag == tag_name:
             self.active_filter_tag = None
@@ -824,6 +893,45 @@ class MainWindow(QWidget):
             self.active_filter_tag = tag_name
 
         self.update_file_list()
+
+    def _on_tag_check_toggled(self, tag_name: str, checked: bool):
+        """Adds or drops a tag from the combined filter."""
+        if checked:
+            self.checked_tags.add(tag_name)
+        else:
+            self.checked_tags.discard(tag_name)
+
+        # Ticking a box takes over from the single-tag click filter, so drop it
+        # along with its highlight.
+        if self.active_filter_tag is not None:
+            self.active_filter_tag = None
+            self.tag_list_widget.clearSelection()
+
+        self.update_file_list()
+
+    def _clear_tag_checkboxes(self):
+        """Unticks every checkbox without rebuilding the rows.
+
+        Called from the item-click handler, so the widgets have to survive: a
+        rebuild here would delete the row being clicked mid-event.
+        """
+        if not self.checked_tags:
+            return
+
+        self.checked_tags.clear()
+        for checkbox in self._tag_checkboxes.values():
+            # Blocked so this doesn't re-enter _on_tag_check_toggled once per box.
+            checkbox.blockSignals(True)
+            checkbox.setChecked(False)
+            checkbox.blockSignals(False)
+
+    def _active_filter_tags(self) -> list[str]:
+        """Returns the tags currently filtering the list, in either mode."""
+        if self.checked_tags:
+            return sorted(self.checked_tags)
+        if self.active_filter_tag:
+            return [self.active_filter_tag]
+        return []
 
     def _parse_tag_name(self, formatted_text: str) -> str:
         """Recovers the bare tag name from a display string like "portrait (5)"."""
@@ -848,6 +956,17 @@ class MainWindow(QWidget):
         row_layout = QHBoxLayout(row_widget)
         row_layout.setContentsMargins(5, 2, 5, 2)
         row_layout.setSpacing(5)
+
+        # Unlike the label, the checkbox consumes its own clicks, so ticking a
+        # box never reaches the item and never triggers the click filter.
+        checkbox = QCheckBox()
+        checkbox.setStyleSheet(STYLES["tag_checkbox"])
+        checkbox.setToolTip(f"Include '{tag_name}' in the combined filter")
+        checkbox.setChecked(tag_name in self.checked_tags)
+        checkbox.toggled.connect(
+            lambda checked, t=tag_name: self._on_tag_check_toggled(t, checked)
+        )
+        self._tag_checkboxes[tag_name] = checkbox
 
         # Transparent to mouse events so clicks fall through to the list item,
         # which is what drives tag filtering.
@@ -876,6 +995,7 @@ class MainWindow(QWidget):
             lambda checked, t=tag_name: self.toggle_specific_tag(t),
         )
 
+        row_layout.addWidget(checkbox)
         row_layout.addWidget(lbl)
         row_layout.addStretch()
         row_layout.addWidget(btn_rename)
@@ -900,6 +1020,9 @@ class MainWindow(QWidget):
         v_scrollbar = self.tag_list_widget.verticalScrollBar()
         scroll_pos = v_scrollbar.value() if v_scrollbar else 0
         self.tag_list_widget.clear()
+        # clear() destroyed the old row widgets, so drop the stale references
+        # before _build_tag_row_widget repopulates them.
+        self._tag_checkboxes.clear()
 
         selected_paths = self.get_selected_paths()
         shared_tags = (
