@@ -28,7 +28,6 @@ from config import (
     OPACITY_SPINBOX_WIDTH,
     OPACITY_SLIDER_WIDTH,
     QUICK_PEN_COLORS,
-    QUICK_PEN_ALPHA,
     QUICK_COLOR_SWATCH_SIZE,
     QUICK_PEN_SIZES,
     QUICK_SIZE_BTN_WIDTH,
@@ -252,6 +251,9 @@ class DrawingToolbar(QWidget):
         # Every control except `draw_btn` itself is only useful while the pen
         # tool is active, so we hide them all until drawing mode is toggled on.
         self._drawing_only_controls: list[QWidget] = []
+        # (base_color_without_alpha, swatch_button) pairs, repainted whenever
+        # the opacity slider changes so their preview always reflects it.
+        self._quick_color_swatches: list[tuple[QColor, QPushButton]] = []
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 6)
@@ -360,22 +362,20 @@ class DrawingToolbar(QWidget):
             self._drawing_only_controls.append(size_btn)
 
         for name, hex_color in QUICK_PEN_COLORS.items():
-            swatch_color = QColor(hex_color)
-            swatch_color.setAlpha(QUICK_PEN_ALPHA)
+            base_color = QColor(hex_color)
 
             swatch_btn = QPushButton()
             swatch_btn.setFixedSize(QUICK_COLOR_SWATCH_SIZE, QUICK_COLOR_SWATCH_SIZE)
             swatch_btn.setToolTip(name)
-            rgba = (
-                f"rgba({swatch_color.red()}, {swatch_color.green()}, "
-                f"{swatch_color.blue()}, {swatch_color.alphaF():.3f})"
+            swatch_btn.clicked.connect(
+                lambda _checked=False, c=base_color: self._select_quick_color(c)
             )
-            swatch_btn.setStyleSheet(
-                STYLES["quick_color_swatch"].replace("{color}", rgba)
-            )
-            swatch_btn.clicked.connect(lambda _checked=False, c=swatch_color: self._select_quick_color(c))
             layout.addWidget(swatch_btn)
             self._drawing_only_controls.append(swatch_btn)
+            self._quick_color_swatches.append((base_color, swatch_btn))
+
+        # Paint the swatches at the current opacity level right away.
+        self._refresh_quick_color_swatches()
 
         # Drawing mode starts disabled, so hide everything but the toggle itself.
         self._set_controls_visible(False)
@@ -384,10 +384,13 @@ class DrawingToolbar(QWidget):
         for widget in self._drawing_only_controls:
             widget.setVisible(visible)
 
-    def _select_quick_color(self, color: QColor):
-        self.pen_color = QColor(color)
+    def _select_quick_color(self, base_color: QColor):
+        """Applies a quick-palette color using the *current* opacity slider
+        setting, rather than a fixed alpha, so the two controls stay in sync."""
+        color = QColor(base_color)
+        color.setAlpha(round(self.opacity_spin.value() / 100 * 255))
+        self.pen_color = color
         self._update_color_btn()
-        self._set_opacity_percent(round(self.pen_color.alpha() / 255 * 100))
         self.color_changed.emit(self.pen_color)
 
     def _on_draw_toggled(self, checked: bool):
@@ -416,21 +419,35 @@ class DrawingToolbar(QWidget):
         alpha = round(percent / 100 * 255)
         self.pen_color.setAlpha(alpha)
         self._update_color_btn()
+        self._refresh_quick_color_swatches()
         self.color_changed.emit(self.pen_color)
 
     def _set_opacity_percent(self, percent: int):
         """Syncs the opacity spinbox/slider without re-triggering
         _on_opacity_percent_changed (avoids redundant color_changed emits
-        when we're the ones setting pen_color, e.g. from the color dialog
-        or a quick-color swatch)."""
+        when we're the ones setting pen_color, e.g. from the color dialog),
+        then repaints the quick-color swatches to match."""
         self.opacity_spin.blockSignals(True)
         self.opacity_slider.blockSignals(True)
         self.opacity_spin.setValue(percent)
         self.opacity_slider.setValue(percent)
         self.opacity_spin.blockSignals(False)
         self.opacity_slider.blockSignals(False)
+        self._refresh_quick_color_swatches()
 
     def _update_color_btn(self):
         c = self.pen_color
         rgba = f"rgba({c.red()}, {c.green()}, {c.blue()}, {c.alphaF():.3f})"
         self.color_btn.setStyleSheet(STYLES["color_swatch_btn"].format(color=rgba))
+
+    def _refresh_quick_color_swatches(self):
+        """Repaints every quick-color preset swatch at the current opacity
+        level, so the palette visually tracks the Opacity slider."""
+        alpha = round(self.opacity_spin.value() / 100 * 255)
+        for base_color, swatch_btn in self._quick_color_swatches:
+            c = QColor(base_color)
+            c.setAlpha(alpha)
+            rgba = f"rgba({c.red()}, {c.green()}, {c.blue()}, {c.alphaF():.3f})"
+            swatch_btn.setStyleSheet(
+                STYLES["quick_color_swatch"].replace("{color}", rgba)
+            )

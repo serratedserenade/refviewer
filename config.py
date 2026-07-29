@@ -88,7 +88,8 @@ QUICK_PEN_COLORS = {
     "Orange": "#ff9900",
     "Cyan": "#00ddff",
 }
-QUICK_PEN_ALPHA = 150  # 0-255; applied to every QUICK_PEN_COLORS swatch
+# Alpha for these swatches now tracks the Opacity slider live (see
+# DrawingToolbar._refresh_quick_color_swatches) rather than a fixed value.
 QUICK_COLOR_SWATCH_SIZE = 20
 
 QUICK_PEN_SIZES = [1, 2, 5, 10, 20]
