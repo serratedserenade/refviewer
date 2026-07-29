@@ -15,6 +15,7 @@ from PyQt6.QtCore import Qt, QPointF, pyqtSignal
 from config import (
     STYLES,
     DRAWING_ICONS,
+    MAX_ANNOTATION_STROKES,
     DEFAULT_PEN_COLOR,
     DEFAULT_PEN_ALPHA,
     DEFAULT_PEN_WIDTH,
@@ -41,12 +42,12 @@ def _default_pen_color() -> QColor:
 
 
 class DrawableImageLabel(QLabel):
-    """Displays the scaled canvas image and supports non-destructive pen annotations.
+    """Displays a scaled image and supports non-destructive pen annotations.
 
-    Annotations are pure UI overlays: they are stored as vector strokes (lists of
-    points in the *original image's* pixel space) and painted on top of the image
-    every frame. `pixmap_source` — the actual image data — is never touched, so
-    nothing is ever written back to the source file on disk.
+    Strokes are stored as vectors in the *source image's* pixel space and
+    repainted over the image each frame, so they stay locked to image features
+    when the widget resizes. `pixmap_source` is never mutated and nothing is
+    written back to the file on disk.
     """
 
     def __init__(self, parent=None):
@@ -54,20 +55,20 @@ class DrawableImageLabel(QLabel):
         self.pixmap_source: QPixmap | None = None
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMinimumSize(1, 1)
-        # Lets clicking the canvas steal keyboard focus away from other
-        # widgets (e.g. the pen-size spinner), so shortcuts route correctly.
+        # Clicking the canvas takes focus off the toolbar spinboxes, which
+        # otherwise swallow the annotation shortcuts.
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
 
         self.drawing_enabled = False
         self.pen_color = _default_pen_color()
         self.pen_width = DEFAULT_PEN_WIDTH
 
-        self.strokes: list[dict] = []  # committed strokes
+        self.strokes: list[dict] = []
         self._current_stroke: dict | None = None
-        self._redo_stack: list[dict] = []  # strokes undone, eligible for redo
+        self._redo_stack: list[dict] = []
 
-        # Cached geometry from the most recent paint, used to map mouse
-        # positions (widget space) back into native image pixel coordinates.
+        # Scale/offset of the letterboxed image as of the last paint, used to
+        # convert mouse positions into image pixel coordinates.
         self._draw_scale = 1.0
         self._draw_offset = QPointF(0, 0)
 
@@ -75,13 +76,12 @@ class DrawableImageLabel(QLabel):
     # Public API
     # ------------------------------------------------------------------
     def set_image(self, pixmap: QPixmap):
-        """Loads a new base image and wipes any existing annotations."""
+        """Loads a new base image, discarding annotations from the previous one."""
         self.pixmap_source = pixmap
         self.clear_annotations()
 
     def reset_image(self):
-        """Clears the displayed image entirely (e.g. on load failure) along with
-        any annotations, so stale artwork/markup never lingers on screen."""
+        """Clears the image and its annotations, e.g. after a failed load."""
         self.pixmap_source = None
         self.clear_annotations()
 
@@ -98,6 +98,11 @@ class DrawableImageLabel(QLabel):
         self.pen_width = width
 
     def clear_annotations(self):
+        """Removes every stroke along with the whole undo/redo history.
+
+        A clear is deliberately not itself undoable, so this is what both the
+        Clear button and the Delete shortcut reset to.
+        """
         self.strokes = []
         self._current_stroke = None
         self._redo_stack = []
@@ -106,21 +111,42 @@ class DrawableImageLabel(QLabel):
     def undo_last_stroke(self):
         if self.strokes:
             self._redo_stack.append(self.strokes.pop())
+            self._trim_history()
             self.update()
 
     def redo_last_stroke(self):
         if self._redo_stack:
             self.strokes.append(self._redo_stack.pop())
+            self._trim_history()
             self.update()
 
     def has_annotations(self) -> bool:
         return bool(self.strokes)
 
+    def _trim_history(self):
+        """Enforces MAX_ANNOTATION_STROKES on both stacks, oldest dropped first.
+
+        The stroke list doubles as the drawing itself, so trimming it also
+        erases the oldest visible stroke — acceptable only because the cap is
+        far beyond a plausible markup session and annotations are transient.
+        """
+        excess = len(self.strokes) - MAX_ANNOTATION_STROKES
+        if excess > 0:
+            del self.strokes[:excess]
+
+        excess = len(self._redo_stack) - MAX_ANNOTATION_STROKES
+        if excess > 0:
+            del self._redo_stack[:excess]
+
     # ------------------------------------------------------------------
     # Coordinate mapping (widget space <-> native image pixel space)
     # ------------------------------------------------------------------
     def _widget_to_image_point(self, widget_pos) -> QPointF | None:
-        if not self.pixmap_source or self.pixmap_source.isNull() or self._draw_scale <= 0:
+        if (
+            not self.pixmap_source
+            or self.pixmap_source.isNull()
+            or self._draw_scale <= 0
+        ):
             return None
 
         x = (widget_pos.x() - self._draw_offset.x()) / self._draw_scale
@@ -154,10 +180,15 @@ class DrawableImageLabel(QLabel):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if self._current_stroke is not None and event.button() == Qt.MouseButton.LeftButton:
+        if (
+            self._current_stroke is not None
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
             self.strokes.append(self._current_stroke)
             self._current_stroke = None
+            # Drawing something new invalidates the redo history.
             self._redo_stack = []
+            self._trim_history()
             self.update()
             return
         super().mouseReleaseEvent(event)
@@ -176,7 +207,7 @@ class DrawableImageLabel(QLabel):
         x = (self.width() - scaled_size.width()) // 2
         y = (self.height() - scaled_size.height()) // 2
 
-        # Cache geometry for mouse-to-image coordinate mapping.
+        # Recorded every paint so _widget_to_image_point stays correct across resizes.
         self._draw_scale = scaled_size.width() / self.pixmap_source.width()
         self._draw_offset = QPointF(x, y)
 
@@ -190,7 +221,7 @@ class DrawableImageLabel(QLabel):
         )
         painter.drawPixmap(x, y, scaled_pixmap)
 
-        # Draw committed strokes plus whatever is currently being drawn, on top.
+        # Committed strokes, plus the in-progress one so it's visible while drawn.
         strokes_to_paint = self.strokes + (
             [self._current_stroke] if self._current_stroke else []
         )
@@ -206,10 +237,11 @@ class DrawableImageLabel(QLabel):
                 p.y() * self._draw_scale + self._draw_offset.y(),
             )
 
+        # Scaling the width with the image keeps strokes proportional on resize.
         pen_width = max(1.0, stroke["width"] * self._draw_scale)
 
         if len(points) == 1:
-            # A single click with no drag — draw a dot so it's still visible.
+            # A click with no drag still has to render as a visible dot.
             wp = to_widget(points[0])
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(stroke["color"])
@@ -232,10 +264,10 @@ class DrawableImageLabel(QLabel):
 
 
 class DrawingToolbar(QWidget):
-    """Horizontal control bar (meant to sit above the canvas) for annotating images.
+    """Horizontal control bar for the pen tool, intended to sit above the canvas.
 
-    Purely emits signals — it holds no reference to the image widget itself, so
-    it stays reusable/testable independent of `DrawableImageLabel`.
+    Communicates only by emitting signals and holds no reference to the canvas,
+    so it stays independent of `DrawableImageLabel`.
     """
 
     draw_toggled = pyqtSignal(bool)
@@ -248,11 +280,10 @@ class DrawingToolbar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.pen_color = _default_pen_color()
-        # Every control except `draw_btn` itself is only useful while the pen
-        # tool is active, so we hide them all until drawing mode is toggled on.
+        # Every control other than draw_btn is hidden until the pen is enabled.
         self._drawing_only_controls: list[QWidget] = []
-        # (base_color_without_alpha, swatch_button) pairs, repainted whenever
-        # the opacity slider changes so their preview always reflects it.
+        # (base color, button) pairs. Base colors carry no alpha; the swatches
+        # are repainted at the current opacity whenever it changes.
         self._quick_color_swatches: list[tuple[QColor, QPushButton]] = []
 
         layout = QHBoxLayout(self)
@@ -287,8 +318,8 @@ class DrawingToolbar(QWidget):
         layout.addWidget(self.size_slider)
         self._drawing_only_controls.append(self.size_slider)
 
-        # Keep the spinbox and slider in lockstep, and forward the
-        # resulting value out to whoever's listening (DrawableImageLabel).
+        # The spinbox and slider mirror each other; only the spinbox forwards
+        # the value onward, so a change from either source emits exactly once.
         self.size_spin.valueChanged.connect(self.size_slider.setValue)
         self.size_slider.valueChanged.connect(self.size_spin.setValue)
         self.size_spin.valueChanged.connect(self.size_changed.emit)
@@ -317,7 +348,6 @@ class DrawingToolbar(QWidget):
         self.opacity_slider.valueChanged.connect(self.opacity_spin.setValue)
         self.opacity_spin.valueChanged.connect(self._on_opacity_percent_changed)
 
-        # Initialize the opacity controls to match the starting pen_color's alpha.
         self._set_opacity_percent(round(self.pen_color.alpha() / 255 * 100))
 
         self.color_btn = QPushButton()
@@ -357,7 +387,10 @@ class DrawingToolbar(QWidget):
             size_btn.setFixedWidth(QUICK_SIZE_BTN_WIDTH)
             size_btn.setToolTip(f"Pen size {size}")
             size_btn.setStyleSheet(STYLES["quick_size_btn"])
-            size_btn.clicked.connect(lambda _checked=False, s=size: self.size_spin.setValue(s))
+            # Routed through size_spin so the spinbox and slider follow along.
+            size_btn.clicked.connect(
+                lambda _checked=False, s=size: self.size_spin.setValue(s)
+            )
             layout.addWidget(size_btn)
             self._drawing_only_controls.append(size_btn)
 
@@ -374,10 +407,7 @@ class DrawingToolbar(QWidget):
             self._drawing_only_controls.append(swatch_btn)
             self._quick_color_swatches.append((base_color, swatch_btn))
 
-        # Paint the swatches at the current opacity level right away.
         self._refresh_quick_color_swatches()
-
-        # Drawing mode starts disabled, so hide everything but the toggle itself.
         self._set_controls_visible(False)
 
     def _set_controls_visible(self, visible: bool):
@@ -385,8 +415,7 @@ class DrawingToolbar(QWidget):
             widget.setVisible(visible)
 
     def _select_quick_color(self, base_color: QColor):
-        """Applies a quick-palette color using the *current* opacity slider
-        setting, rather than a fixed alpha, so the two controls stay in sync."""
+        """Applies a preset color at whatever opacity is currently set."""
         color = QColor(base_color)
         color.setAlpha(round(self.opacity_spin.value() / 100 * 255))
         self.pen_color = color
@@ -414,8 +443,7 @@ class DrawingToolbar(QWidget):
                 self.color_changed.emit(color)
 
     def _on_opacity_percent_changed(self, percent: int):
-        """Opacity is exposed to the user as 0-100%, translated here to the
-        0-255 alpha value QColor actually stores."""
+        """Converts the 0-100% control value into the 0-255 alpha QColor stores."""
         alpha = round(percent / 100 * 255)
         self.pen_color.setAlpha(alpha)
         self._update_color_btn()
@@ -423,10 +451,12 @@ class DrawingToolbar(QWidget):
         self.color_changed.emit(self.pen_color)
 
     def _set_opacity_percent(self, percent: int):
-        """Syncs the opacity spinbox/slider without re-triggering
-        _on_opacity_percent_changed (avoids redundant color_changed emits
-        when we're the ones setting pen_color, e.g. from the color dialog),
-        then repaints the quick-color swatches to match."""
+        """Moves the opacity controls to `percent` without emitting.
+
+        Signals are blocked because callers have already applied the alpha to
+        pen_color themselves; letting the handler run would emit color_changed
+        a second time.
+        """
         self.opacity_spin.blockSignals(True)
         self.opacity_slider.blockSignals(True)
         self.opacity_spin.setValue(percent)
@@ -441,8 +471,7 @@ class DrawingToolbar(QWidget):
         self.color_btn.setStyleSheet(STYLES["color_swatch_btn"].format(color=rgba))
 
     def _refresh_quick_color_swatches(self):
-        """Repaints every quick-color preset swatch at the current opacity
-        level, so the palette visually tracks the Opacity slider."""
+        """Repaints the preset swatches so the palette previews current opacity."""
         alpha = round(self.opacity_spin.value() / 100 * 255)
         for base_color, swatch_btn in self._quick_color_swatches:
             c = QColor(base_color)

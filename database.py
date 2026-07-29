@@ -1,15 +1,23 @@
 import sqlite3
-from config import DB_DIR, DB_PATH
-
 import threading
 
+from config import DB_DIR, DB_PATH
+
+# SQLite allows roughly 999 bound parameters per statement, so any query built
+# from a variable-length list of filepaths is issued in chunks of this size.
+SQL_PARAM_CHUNK = 900
+
+# sqlite3 connections cannot be shared across threads, and the thumbnail and
+# canvas workers both read from the database, so each thread gets its own.
 _local = threading.local()
+
 
 def _get_connection():
     if not hasattr(_local, "conn") or _local.conn is None:
         _local.conn = sqlite3.connect(str(DB_PATH))
         _local.conn.execute("PRAGMA foreign_keys = ON;")
-        _local.conn.execute("PRAGMA journal_mode = WAL;")  # Bonus: enables concurrent reads
+        # WAL lets background threads read while the UI thread writes.
+        _local.conn.execute("PRAGMA journal_mode = WAL;")
     return _local.conn
 
 def init_database():
@@ -34,7 +42,7 @@ def init_database():
             )
         """)
 
-        # Performance indexes
+        # Indexes covering the lookup paths used by the queries below.
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_images_filepath ON images(filepath);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_image_tags_image ON image_tags(image_id);")
@@ -77,39 +85,40 @@ def add_tag_to_image(filepath: str, tag_name: str):
 
 
 def delete_tag(tag_name: str):
-    """Permanently deletes a tag. (Foreign Key cascades will remove it from all images automatically)"""
+    """Deletes a tag globally. Foreign key cascades unassign it from every image."""
     with _get_connection() as conn:
         conn.execute("DELETE FROM tags WHERE name = ?", (tag_name,))
         conn.commit()
 
 
 def rename_tag(old_name: str, new_name: str):
-    """Renames a tag. Intelligently merges data if the new name already exists."""
+    """Renames a tag, merging into the target if that name is already taken.
+
+    Merging rather than failing keeps the UNIQUE constraint on tags.name from
+    rejecting a rename onto an existing tag.
+    """
     with _get_connection() as conn:
         cursor = conn.cursor()
 
-        # Check if the desired new name already exists
         cursor.execute("SELECT id FROM tags WHERE name = ?", (new_name,))
         existing = cursor.fetchone()
 
         if existing:
-            # The new tag exists. We need to MERGE them.
             new_id = existing[0]
             cursor.execute("SELECT id FROM tags WHERE name = ?", (old_name,))
             old_id_row = cursor.fetchone()
 
             if old_id_row:
                 old_id = old_id_row[0]
-                # Re-assign all images holding the old tag to the new tag (IGNORE prevents duplicates)
+                # Move every assignment over, then drop the old tag. IGNORE
+                # covers images that already carry both tags.
                 cursor.execute(
                     "INSERT OR IGNORE INTO image_tags (image_id, tag_id) SELECT image_id, ? FROM image_tags WHERE tag_id = ?",
                     (new_id, old_id),
                 )
-                # Delete the outdated link and the old tag itself
                 cursor.execute("DELETE FROM image_tags WHERE tag_id = ?", (old_id,))
                 cursor.execute("DELETE FROM tags WHERE id = ?", (old_id,))
         else:
-            # It's a brand new word, just update the string globally
             cursor.execute(
                 "UPDATE tags SET name = ? WHERE name = ?", (new_name, old_name)
             )
@@ -133,6 +142,7 @@ def get_image_tags(filepath: str) -> list[str]:
 
 
 def get_all_tags() -> list[str]:
+    """Returns every tag formatted as "name (count)" for display."""
     with _get_connection() as conn:
         cursor = conn.execute("""
             SELECT tags.name, COUNT(image_tags.image_id) 
@@ -176,15 +186,18 @@ def get_images_by_tag(tag_name: str) -> list[str]:
 
 
 def get_shared_tags(filepaths: list[str]) -> set[str]:
-    """Returns the intersection of tags shared across ALL given filepaths."""
+    """Returns only the tags assigned to *every* one of the given filepaths.
+
+    This drives the +/- toggle state in the tag sidebar during multi-selection:
+    a tag reads as assigned only when the whole selection carries it.
+    """
     if not filepaths:
         return set()
     with _get_connection() as conn:
-        chunk_size = 900  # SQLite limit for parameters is ~999
         file_to_tags = {fp: set() for fp in filepaths}
 
-        for i in range(0, len(filepaths), chunk_size):
-            chunk = filepaths[i : i + chunk_size]
+        for i in range(0, len(filepaths), SQL_PARAM_CHUNK):
+            chunk = filepaths[i : i + SQL_PARAM_CHUNK]
             placeholders = ", ".join("?" for _ in chunk)
             cursor = conn.execute(
                 f"""
@@ -198,7 +211,6 @@ def get_shared_tags(filepaths: list[str]) -> set[str]:
             for filepath, tag_name in cursor:
                 file_to_tags[filepath].add(tag_name)
 
-        # Intersection math
         shared = None
         for tags in file_to_tags.values():
             if shared is None:
@@ -211,27 +223,26 @@ def get_shared_tags(filepaths: list[str]) -> set[str]:
 
 
 def bulk_add_tag_to_images(filepaths: list[str], tag_name: str):
-    """Instantly adds a tag to thousands of images in a single transaction."""
+    """Assigns one tag to many images in a single transaction."""
     if not filepaths:
         return
     with _get_connection() as conn:
         cursor = conn.cursor()
 
-        # Ensure tag exists
         cursor.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (tag_name,))
         cursor.execute("SELECT id FROM tags WHERE name = ?", (tag_name,))
         tag_id = cursor.fetchone()[0]
 
-        # Bulk ensure images exist
+        # Images are only registered once they are tagged, so insert any that
+        # aren't in the table yet before resolving their ids.
         cursor.executemany(
             "INSERT OR IGNORE INTO images (filepath) VALUES (?)",
             [(fp,) for fp in filepaths],
         )
 
-        chunk_size = 900
         image_ids = []
-        for i in range(0, len(filepaths), chunk_size):
-            chunk = filepaths[i : i + chunk_size]
+        for i in range(0, len(filepaths), SQL_PARAM_CHUNK):
+            chunk = filepaths[i : i + SQL_PARAM_CHUNK]
             placeholders = ", ".join("?" for _ in chunk)
             res = cursor.execute(
                 f"SELECT id FROM images WHERE filepath IN ({placeholders})", chunk
@@ -246,14 +257,13 @@ def bulk_add_tag_to_images(filepaths: list[str], tag_name: str):
 
 
 def bulk_remove_tag_from_images(filepaths: list[str], tag_name: str):
-    """Instantly removes a tag from thousands of images."""
+    """Unassigns one tag from many images in a single transaction."""
     if not filepaths:
         return
     with _get_connection() as conn:
         cursor = conn.cursor()
-        chunk_size = 900
-        for i in range(0, len(filepaths), chunk_size):
-            chunk = filepaths[i : i + chunk_size]
+        for i in range(0, len(filepaths), SQL_PARAM_CHUNK):
+            chunk = filepaths[i : i + SQL_PARAM_CHUNK]
             placeholders = ", ".join("?" for _ in chunk)
             cursor.execute(
                 f"""

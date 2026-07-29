@@ -33,26 +33,41 @@ APP_TIMER_DEFAULT = "60"
 
 
 # ==============================================================================
-# Global Stylesheet Dictionary
+# Tag UI
 # ==============================================================================
 TAG_ICONS = {"rename": "✏️", "delete": "🗑️", "add": "+", "remove": "−"}
 
 TAG_BTN_SIZE = 20
+# Matches the trailing image count in a formatted tag string, e.g. "portrait (12)".
 TAG_PARSE_REGEX = r"^(.*)\s\(\d+\)$"
+
+# ==============================================================================
+# File List Thumbnails (Left Sidebar "Images" Tab)
+# ==============================================================================
+# THUMBNAIL_SIZE is both the icon size in the list and the size thumbnails are
+# generated and cached at, so the two must stay in step.
+THUMBNAIL_SIZE = 100
+THUMBNAIL_GRID_SIZE = 110
+# Taller cells are needed in icon mode when filepath labels are shown.
+THUMBNAIL_GRID_SIZE_LABELLED = (120, 180)
+LIST_ROW_SIZE = (250, 24)
+# Delay before the path filter rebuilds the list, so typing doesn't rescan per key.
+PATH_FILTER_DEBOUNCE_MS = 300
 
 # ==============================================================================
 # Session History (Left Sidebar "History" Tab)
 # ==============================================================================
-# Purely in-memory / per-session (never written to disk or the database), so
-# it's wiped every time the app restarts. These are just UI sizing knobs.
+# The history list is in-memory only and is never persisted.
 HISTORY_ICON_SIZE = 100
 HISTORY_GRID_SIZE = 110
+# Cap on retained entries; the oldest are dropped once the list exceeds this.
+HISTORY_MAX_ITEMS = 100
 
 # ==============================================================================
 # Drawing / Annotation Tool Settings
 # ==============================================================================
-# Annotations are a purely transient, in-session overlay (see components/drawing_canvas.py).
-# They are never saved to disk or the database, so these are just UI defaults/bounds.
+# Annotations are a transient overlay and are never persisted, so these are
+# purely UI defaults and bounds.
 DRAWING_ICONS = {
     "draw_off": "✏️ Draw",
     "draw_on": "✏️ Drawing",
@@ -60,6 +75,11 @@ DRAWING_ICONS = {
     "redo": "↪️",
     "clear": "🧹",
 }
+
+# Cap on retained annotation strokes. Because the stroke list *is* the drawing,
+# this bounds both memory and how far back Undo can reach: once the cap is hit,
+# the oldest stroke is dropped from the canvas along with its undo entry.
+MAX_ANNOTATION_STROKES = 500
 
 DEFAULT_PEN_COLOR = "#ff0000"
 DEFAULT_PEN_ALPHA = 150  # 0-255; applied to DEFAULT_PEN_COLOR on startup
@@ -71,14 +91,15 @@ PEN_SIZE_SPINBOX_WIDTH = 55
 SIZE_SLIDER_WIDTH = 80
 COLOR_SWATCH_SIZE = 24
 
-# Opacity is exposed to the user as a 0-100% value, translated internally to
-# the 0-255 alpha range QColor actually uses.
+# Opacity is exposed to the user as 0-100%, translated internally to the
+# 0-255 alpha range QColor uses.
 PEN_OPACITY_PERCENT_MIN = 0
 PEN_OPACITY_PERCENT_MAX = 100
 OPACITY_SPINBOX_WIDTH = 55
 OPACITY_SLIDER_WIDTH = 80
 
-# Quick-access presets shown as their own swatches/buttons on the toolbar.
+# Quick-access presets shown as swatches/buttons on the toolbar. These are base
+# colors; their alpha is taken from the Opacity control at selection time.
 QUICK_PEN_COLORS = {
     "Red": "#ff0000",
     "Blue": "#0000ff",
@@ -88,13 +109,16 @@ QUICK_PEN_COLORS = {
     "Orange": "#ff9900",
     "Cyan": "#00ddff",
 }
-# Alpha for these swatches now tracks the Opacity slider live (see
-# DrawingToolbar._refresh_quick_color_swatches) rather than a fixed value.
 QUICK_COLOR_SWATCH_SIZE = 20
 
 QUICK_PEN_SIZES = [1, 2, 5, 10, 20]
 QUICK_SIZE_BTN_WIDTH = 26
 
+# ==============================================================================
+# Global Stylesheet Dictionary
+# ==============================================================================
+# Keys are referenced as STYLES["<key>"] throughout the UI. Entries containing
+# a {color} placeholder are formatted with a live value at runtime.
 STYLES = {
     "sidebar": "background-color: #2c3e50;",
     "right_sidebar": "background-color: #34495e;",

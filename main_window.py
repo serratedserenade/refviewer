@@ -19,7 +19,6 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QSplitter,
     QAbstractItemView,
-    QSpinBox,
     QAbstractSpinBox,
     QTabWidget,
 )
@@ -44,8 +43,14 @@ from config import (
     TAG_BTN_SIZE,
     TAG_PARSE_REGEX,
     APP_TIMER_DEFAULT,
+    THUMBNAIL_SIZE,
+    THUMBNAIL_GRID_SIZE,
+    THUMBNAIL_GRID_SIZE_LABELLED,
+    LIST_ROW_SIZE,
+    PATH_FILTER_DEBOUNCE_MS,
     HISTORY_ICON_SIZE,
     HISTORY_GRID_SIZE,
+    HISTORY_MAX_ITEMS,
 )
 from file_scanner import scan_directory
 from components.image_viewer import CanvasLoader
@@ -60,25 +65,28 @@ class MainWindow(QWidget):
         self.setWindowTitle("RefViewer")
         self.setMinimumSize(1200, 600)
 
-        # State Variables
+        # --- State ---
         self.active_image_path = None
+        # Every image found by the last folder scan, regardless of filtering.
         self.scanned_files = []
+        # Tag currently filtering the file list, or None when unfiltered.
         self.active_filter_tag = None
         self.is_icon_view = True
+        self.show_labels = False
         self.thumb_loader = None
+        # Incremented per list rebuild so results from superseded thumbnail
+        # loaders can be recognised and discarded.
+        self.thumb_generation = 0
         self.time_left = 0
         self.timer_interval = 0
-        self.show_labels = False
-        self.thumb_generation = 0
         self.left_sidebar: QTabWidget = None
         self.right_sidebar: QFrame = None
 
         self._canvas_loaders = []
         self._setup_shortcuts()
 
-        # Application-wide filter so Ctrl+Z / Ctrl+Shift+Z reliably drive
-        # annotation undo/redo even when a spinner or other non-text widget
-        # currently holds keyboard focus (see eventFilter() for details).
+        # See eventFilter(): the annotation shortcuts have to be caught
+        # application-wide to survive Qt's shortcut-override mechanism.
         QApplication.instance().installEventFilter(self)
 
         self.path_filter_timer = QTimer(self)
@@ -90,42 +98,40 @@ class MainWindow(QWidget):
         self._build_ui()
         self._setup_timer()
 
-        # Defer heavy I/O until after the window is painted
+        # Deferred so the window paints before the folder scan blocks.
         QTimer.singleShot(0, self._deferred_startup)
 
     def _deferred_startup(self):
-        """Runs after the window is visible. Loads saved folder and tags."""
+        """Restores the last folder and tag list once the window is visible."""
         self.load_saved_folder()
         self.refresh_global_tags()
 
     # ========================== UI SETUP ==========================
 
     def _build_ui(self):
-        # Create a horizontal splitter for resizable sidebars
+        """Assembles the three panels into a user-resizable splitter."""
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.setChildrenCollapsible(False)
         self.splitter.setHandleWidth(4)
-        
+
         self.left_sidebar = self._create_left_sidebar()
         self.center_canvas = self._create_center_canvas()
         self.right_sidebar = self._create_right_sidebar()
-        
-        # Add widgets to splitter
+
         self.splitter.addWidget(self.left_sidebar)
         self.splitter.addWidget(self.center_canvas)
         self.splitter.addWidget(self.right_sidebar)
-        
-        # Set proportional sizing using stretch factors instead of fixed pixels
+
+        # Proportional rather than fixed, so the canvas absorbs window resizes.
         self.splitter.setStretchFactor(0, 1)  # Left sidebar
         self.splitter.setStretchFactor(1, 7)  # Center canvas
         self.splitter.setStretchFactor(2, 1)  # Right sidebar
-        
-        # Set reasonable minimum widths (reduced to allow stretch factors to work)
+
+        # Floors low enough that the stretch factors still govern normal sizing.
         self.left_sidebar.setMinimumWidth(200)
         self.center_canvas.setMinimumWidth(400)
         self.right_sidebar.setMinimumWidth(200)
-        
-        # Create a layout to hold the splitter
+
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addWidget(self.splitter)
@@ -133,11 +139,8 @@ class MainWindow(QWidget):
     def _create_left_sidebar(self) -> QTabWidget:
         tabs = QTabWidget()
         tabs.setStyleSheet(STYLES["tab_widget"])
-        # QWidget subclasses like QTabWidget don't paint a QSS-defined
-        # background by default for the strip of tab-bar area beyond the
-        # last tab (that stretch is otherwise drawn using the native style's
-        # own base color, often white). Explicitly opting into a
-        # stylesheet-painted background fixes it.
+        # Without this, the tab-bar strip past the last tab is painted by the
+        # native style (often white) instead of the stylesheet background.
         tabs.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         tabs.addTab(self._create_images_tab(), "Images")
@@ -153,14 +156,14 @@ class MainWindow(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
 
-        # ROW 1: Path Display (Full Width)
+        # Selected folder
         self.path_display = QLineEdit()
         self.path_display.setPlaceholderText("No folder selected")
         self.path_display.setReadOnly(True)
         self.path_display.setStyleSheet(STYLES["input"])
         layout.addWidget(self.path_display)
 
-        # ROW 2: Action Buttons
+        # View controls
         buttons_row = QVBoxLayout()
         buttons_row.setContentsMargins(0, 0, 0, 0)
         buttons_row.setSpacing(5)
@@ -182,7 +185,7 @@ class MainWindow(QWidget):
         buttons_row.addWidget(btn_toggle_text)
         layout.addLayout(buttons_row)
 
-        # ROW 3: File Data List
+        # Image list
         self.file_list_widget = QListWidget()
         self.file_list_widget.setStyleSheet(STYLES["list"])
         self.file_list_widget.currentItemChanged.connect(self.on_file_item_changed)
@@ -198,33 +201,34 @@ class MainWindow(QWidget):
 
         layout.addWidget(self.file_list_widget)
 
-        # ROW 4: Path Filter Input
+        # Path filter, debounced so each keystroke doesn't rebuild the list
         self.path_filter_input = QLineEdit()
         self.path_filter_input.setPlaceholderText("Filter by path/filename...")
         self.path_filter_input.setStyleSheet(STYLES["input"])
-        # Use lambda to trigger the 300ms delay timer
         self.path_filter_input.textChanged.connect(
-            lambda: self.path_filter_timer.start(300)
+            lambda: self.path_filter_timer.start(PATH_FILTER_DEBOUNCE_MS)
         )
         layout.addWidget(self.path_filter_input)
 
-        # ROW 5: Thumbnail Loading Progress Bar
+        # Thumbnail generation progress
         self.progress_bar = QProgressBar()
-        self.progress_bar.setFixedHeight(8)  # Slim and unobtrusive
-        self.progress_bar.setTextVisible(False)  # Hide the percentage text
+        self.progress_bar.setFixedHeight(8)
+        self.progress_bar.setTextVisible(False)
         self.progress_bar.setStyleSheet("""
             QProgressBar { border: 1px solid #34495e; border-radius: 4px; background-color: #1a252f; }
             QProgressBar::chunk { background-color: #2980b9; border-radius: 3px; }
         """)
-        self.progress_bar.hide()  # Hidden by default
+        self.progress_bar.hide()
         layout.addWidget(self.progress_bar)
 
         return sidebar
 
     def _create_history_tab(self) -> QFrame:
-        """Ephemeral, session-only record of every image that has been
-        actively viewed via the Images tab or the Random-image shortcut.
-        Nothing here is persisted — it starts empty every time the app opens."""
+        """Builds the History tab: a thumbnail grid of images viewed this session.
+
+        The list is in-memory only, so it starts empty on every launch, and is
+        capped at HISTORY_MAX_ITEMS entries.
+        """
         history_tab = QFrame()
         history_tab.setStyleSheet(STYLES["sidebar"])
 
@@ -246,8 +250,8 @@ class MainWindow(QWidget):
         self.history_list_widget.setAcceptDrops(False)
         self.history_list_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
 
-        # NOTE: intentionally its own handler, separate from on_file_item_changed,
-        # so browsing the History tab never re-adds entries to itself.
+        # Deliberately a separate handler from on_file_item_changed, so browsing
+        # History never appends to History.
         self.history_list_widget.currentItemChanged.connect(self.on_history_item_changed)
 
         layout.addWidget(self.history_list_widget)
@@ -438,31 +442,27 @@ class MainWindow(QWidget):
         self.update_file_list()
 
     def update_file_list(self):
-        # 1. Kill any running loader
+        """Rebuilds the image list from the current folder, tag filter and search."""
         if self.thumb_loader and self.thumb_loader.isRunning():
             self.thumb_loader.stop()
             self.thumb_loader.wait()
 
-        # 2. Always hide the progress bar at the start of a rebuild
         self.progress_bar.hide()
         self.progress_bar.setValue(0)
 
         self.file_list_widget.clear()
 
-        # Define sizes and alignments dynamically based on the label toggle
+        # Cells grow taller when filepath labels sit beneath each thumbnail.
         if self.show_labels:
-            grid_size = QSize(120, 180)
+            grid_size = QSize(*THUMBNAIL_GRID_SIZE_LABELLED)
             icon_align = Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom
         else:
-            grid_size = QSize(110, 110)
-            icon_align = (
-                Qt.AlignmentFlag.AlignCenter
-            )  # Perfectly center the icon in the box
+            grid_size = QSize(THUMBNAIL_GRID_SIZE, THUMBNAIL_GRID_SIZE)
+            icon_align = Qt.AlignmentFlag.AlignCenter
 
-        # 1. Config List & Dynamic Grid Sizing
         if self.is_icon_view:
             self.file_list_widget.setViewMode(QListWidget.ViewMode.IconMode)
-            self.file_list_widget.setIconSize(QSize(100, 100))
+            self.file_list_widget.setIconSize(QSize(THUMBNAIL_SIZE, THUMBNAIL_SIZE))
             self.file_list_widget.setResizeMode(QListWidget.ResizeMode.Adjust)
             self.file_list_widget.setGridSize(grid_size)
             self.file_list_widget.setSpacing(5)
@@ -475,26 +475,28 @@ class MainWindow(QWidget):
             self.file_list_widget.setWordWrap(False)
             self.file_list_widget.setUniformItemSizes(True)
 
-        # 2. Extract Base Files
+        # A tag filter draws from the whole database, so it can return images
+        # from outside the scanned folder; otherwise use the scan directly.
         display_files = (
             database.get_images_by_tag(self.active_filter_tag)
             if self.active_filter_tag
             else self.scanned_files
         )
 
+        # Tagged paths are absolute and may since have been moved or deleted.
         display_files = [f for f in display_files if os.path.isfile(f)]
 
-        # 3. Apply the Path/Text Filter
         filter_text = self.path_filter_input.text().strip().lower()
         if filter_text:
             display_files = [f for f in display_files if filter_text in f.lower()]
 
-        # 4. Generate the UI Row Items
         items_for_worker = []
         for row, file_path in enumerate(display_files):
+            # Anything outside the current scan is highlighted in yellow.
             is_external = file_path not in self.scanned_files
 
-            # ALWAYS show text if in List Mode. Only obey the toggle if in Icon Mode.
+            # List mode is text-only, so it always shows the path; icon mode
+            # defers to the label toggle.
             if not self.is_icon_view or self.show_labels:
                 display_text = file_path
             else:
@@ -507,7 +509,7 @@ class MainWindow(QWidget):
                 item.setSizeHint(grid_size)
                 item.setTextAlignment(icon_align)
             else:
-                item.setSizeHint(QSize(250, 24))
+                item.setSizeHint(QSize(*LIST_ROW_SIZE))
                 item.setTextAlignment(
                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
                 )
@@ -517,10 +519,10 @@ class MainWindow(QWidget):
 
             self.file_list_widget.addItem(item)
 
+            # Only icon mode needs thumbnails generated.
             if self.is_icon_view:
                 items_for_worker.append((row, file_path, is_external))
 
-        # 5. Multithreading the Icons
         if self.is_icon_view and items_for_worker:
             self.loaded_thumbnail_count = 0
             self.progress_bar.setMaximum(len(items_for_worker))
@@ -542,32 +544,25 @@ class MainWindow(QWidget):
             self.progress_bar.hide()
 
     def _on_thumbnail_loading_finished(self):
-        """Only hide the bar if this signal is from the CURRENT loader."""
-        sender = self.sender()
-        if sender is self.thumb_loader:
+        """Hides the progress bar, ignoring signals from superseded loaders."""
+        if self.sender() is self.thumb_loader:
             self.progress_bar.hide()
 
     def on_thumbnail_ready(self, row, file_path, img, is_external, generation):
         if generation != self.thumb_generation:
-            return  # Signal is from a previous, stale loader run
+            return  # A loader from a previous list build.
 
         self.loaded_thumbnail_count += 1
         self.progress_bar.setValue(self.loaded_thumbnail_count)
 
-        item = self.file_list_widget.item(row)
-        if not item or item.data(Qt.ItemDataRole.UserRole) != file_path:
-            return
-
-        # Tick the progress bar forward purely for visual feedback
-        self.loaded_thumbnail_count += 1
-        self.progress_bar.setValue(self.loaded_thumbnail_count)
-
+        # The row may have been reused or removed since the load was queued.
         item = self.file_list_widget.item(row)
         if not item or item.data(Qt.ItemDataRole.UserRole) != file_path:
             return
 
         pixmap = QPixmap.fromImage(img)
         if is_external:
+            # Outline images that live outside the scanned folder.
             painter = QPainter(pixmap)
             pen = QPen(QColor("yellow"))
             pen.setWidth(6)
@@ -587,8 +582,7 @@ class MainWindow(QWidget):
         self._add_to_history(path, current.icon())
 
     def on_history_item_changed(self, current, previous):
-        """Selecting an item *within* the History tab should display it,
-        but must never create another entry back into the History list."""
+        """Displays a history entry without recording it as a new visit."""
         if not current:
             return
 
@@ -596,42 +590,44 @@ class MainWindow(QWidget):
         self._activate_image_path(path)
 
     def _activate_image_path(self, path):
-        """Shared by both the Images list and the History list: sets the
-        active image, refreshes its tag bubbles, and kicks off a background
-        decode of the full-resolution canvas."""
+        """Makes `path` the displayed image and starts decoding it.
+
+        Shared by the Images and History lists.
+        """
         self.active_image_path = path
         self.refresh_assigned_bubbles()
 
-        # 1. Cancel all previous loaders (they'll silently discard their results)
+        # Supersede any in-flight decode; cancelled loaders drop their result.
         for loader in self._canvas_loaders:
             loader.cancel()
 
-        # 2. Purge any loaders that have already finished
-        #    (safe to let Python GC collect these — their thread is done)
-        self._canvas_loaders = [l for l in self._canvas_loaders if l.isRunning()]
+        self._canvas_loaders = [
+            loader for loader in self._canvas_loaders if loader.isRunning()
+        ]
 
-        # 3. Spawn the new loader and keep a strong reference to it
+        # Held in a list because a QThread that goes out of scope is destroyed
+        # while still running.
         loader = CanvasLoader(self.active_image_path, parent=None)
         loader.image_ready.connect(self.on_canvas_image_ready)
-        loader.finished.connect(lambda l=loader: self._cleanup_loader(l))
+        loader.finished.connect(lambda finished=loader: self._cleanup_loader(finished))
         loader.start()
         self._canvas_loaders.append(loader)
 
     def _cleanup_loader(self, loader):
-        """Remove a finished loader from the reference list so it can be garbage collected."""
+        """Drops the reference to a finished loader so it can be collected."""
         if loader in self._canvas_loaders:
             self._canvas_loaders.remove(loader)
 
-    # ========================== SESSION HISTORY (ephemeral) ==========================
-    # Purely in-memory: nothing here is written to the database or disk, so the
-    # History tab always starts empty when the app is (re)launched.
+    # ========================== SESSION HISTORY ==========================
+    # In-memory only: nothing here reaches the database or disk, so the History
+    # tab starts empty on every launch.
 
     def _add_to_history(self, path, icon: QIcon):
+        """Records `path` as the most recent view, trimming the oldest entries."""
         if not path:
             return
 
-        # Skip if this is literally the same image already at the top of
-        # the history (avoids piling up duplicates from repeated clicks).
+        # Repeatedly clicking one image shouldn't stack duplicate entries.
         top_item = self.history_list_widget.item(0)
         if top_item and top_item.data(Qt.ItemDataRole.UserRole) == path:
             return
@@ -643,16 +639,22 @@ class MainWindow(QWidget):
         item.setData(Qt.ItemDataRole.UserRole, path)
         item.setToolTip(path)
 
-        # Most-recently-viewed image goes to the top of the list.
+        # Signals stay blocked so inserting and trimming never re-enters
+        # on_history_item_changed and displays the wrong image.
         self.history_list_widget.blockSignals(True)
+        # Newest first, so the oldest entries are the ones at the end.
         self.history_list_widget.insertItem(0, item)
+        while self.history_list_widget.count() > HISTORY_MAX_ITEMS:
+            self.history_list_widget.takeItem(self.history_list_widget.count() - 1)
         self.history_list_widget.blockSignals(False)
 
     def _make_thumbnail_icon(self, file_path) -> QIcon:
-        """Fallback thumbnail generator for history entries whose Images-list
-        icon isn't available (e.g. it hasn't finished loading yet). Uses the
-        same on-disk cache scheme as ThumbnailLoader, so repeated calls (or a
-        later real thumbnail load) stay cheap and consistent."""
+        """Builds a thumbnail for a history entry that has no icon yet.
+
+        Needed because an image can be viewed before the Images list has
+        finished generating its thumbnail. Shares ThumbnailLoader's on-disk
+        cache, so the work is not repeated later.
+        """
         try:
             mtime = os.path.getmtime(file_path)
         except OSError:
@@ -690,7 +692,7 @@ class MainWindow(QWidget):
         self.history_list_widget.clear()
 
     def on_canvas_image_ready(self, requested_path, img):
-        # Prevent race conditions if the user clicked 5 images rapidly
+        # Discard results for an image the user has already navigated away from.
         if requested_path != self.active_image_path:
             return
 
@@ -712,14 +714,12 @@ class MainWindow(QWidget):
         ]
 
     def on_selection_changed(self):
-        """Refreshes the right sidebar whenever you Shift+Click multiple items."""
+        """Recomputes tag assignment state, which depends on the whole selection."""
         self.refresh_global_tags()
 
     # ========================== ANNOTATIONS ==========================
-    # NOTE: Annotations are a purely visual, in-session overlay for marking up
-    # reference images (e.g. pointing out proportions or lighting notes). They
-    # are never written back to the image file and are wiped whenever a new
-    # image is loaded (see DrawableImageLabel.set_image).
+    # Thin forwarding layer between the toolbar's signals and the canvas.
+    # See components/drawing_canvas.py for the annotation model itself.
 
     def _on_draw_toggled(self, enabled):
         self.image_viewer.set_drawing_enabled(enabled)
@@ -749,7 +749,6 @@ class MainWindow(QWidget):
             self.tag_input.clear()
             return
 
-        # Execute 1 bulk transaction instead of 500 individual ones!
         database.bulk_add_tag_to_images(selected_paths, tag_text)
 
         self.tag_input.clear()
@@ -757,8 +756,7 @@ class MainWindow(QWidget):
         self.refresh_assigned_bubbles()
 
     def action_rename_tag(self, old_name):
-        """Spawns a pop-up to rename a tag, then updates the database and UI."""
-        # Open a styled dialog box
+        """Prompts for a new tag name, then updates the database and UI."""
         new_name, ok = QInputDialog.getText(
             self, "Rename Tag", f"Rename '{old_name}' to:"
         )
@@ -767,7 +765,7 @@ class MainWindow(QWidget):
             clean_name = new_name.strip()
             database.rename_tag(old_name, clean_name)
 
-            # If we renamed the tag we are currently filtering by, update the filter state
+            # Follow the rename, or the active filter would point at a dead tag.
             if self.active_filter_tag == old_name:
                 self.active_filter_tag = clean_name
 
@@ -776,7 +774,7 @@ class MainWindow(QWidget):
             self.update_file_list()
 
     def action_delete_tag(self, tag_name):
-        """Spawns a confirmation warning to delete a tag globally."""
+        """Confirms, then deletes a tag from every image in the database."""
         reply = QMessageBox.question(
             self,
             "Delete Tag",
@@ -787,7 +785,7 @@ class MainWindow(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             database.delete_tag(tag_name)
 
-            # If we deleted the tag we are actively looking through, clear the filter
+            # Drop the filter, or the list would keep showing a deleted tag.
             if self.active_filter_tag == tag_name:
                 self.active_filter_tag = None
 
@@ -796,6 +794,7 @@ class MainWindow(QWidget):
             self.update_file_list()
 
     def toggle_specific_tag(self, tag_name):
+        """Adds the tag to the whole selection, or removes it if all already have it."""
         selected_paths = self.get_selected_paths()
         if not selected_paths:
             return
@@ -810,10 +809,12 @@ class MainWindow(QWidget):
         self.refresh_global_tags()
         self.refresh_assigned_bubbles()
 
+        # Only matters while filtering, where the change can add or drop rows.
         if self.active_filter_tag:
             self.update_file_list()
 
     def on_tag_item_clicked(self, item):
+        """Applies the clicked tag as the list filter, or clears it if re-clicked."""
         tag_name = item.data(Qt.ItemDataRole.UserRole)
 
         if self.active_filter_tag == tag_name:
@@ -825,7 +826,7 @@ class MainWindow(QWidget):
         self.update_file_list()
 
     def _parse_tag_name(self, formatted_text: str) -> str:
-        """Strips the image count (e.g., '(5)') from the database tag string."""
+        """Recovers the bare tag name from a display string like "portrait (5)"."""
         match = re.match(TAG_PARSE_REGEX, formatted_text)
         return match.group(1).strip() if match else formatted_text.strip()
 
@@ -842,18 +843,18 @@ class MainWindow(QWidget):
     def _build_tag_row_widget(
         self, tag_name: str, display_text: str, is_assigned: bool
     ) -> QWidget:
-        """Constructs an entire horizontal layout row for a single tag."""
+        """Builds the label-plus-buttons row shown for one tag in the sidebar."""
         row_widget = QWidget()
         row_layout = QHBoxLayout(row_widget)
         row_layout.setContentsMargins(5, 2, 5, 2)
         row_layout.setSpacing(5)
 
-        # 1. Label
+        # Transparent to mouse events so clicks fall through to the list item,
+        # which is what drives tag filtering.
         lbl = QLabel(display_text)
         lbl.setStyleSheet(STYLES["tag_row_label"])
         lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
-        # 2. Action Buttons (Rename / Delete)
         btn_rename = self._create_tag_button(
             TAG_ICONS["rename"],
             "tag_btn_action",
@@ -866,7 +867,7 @@ class MainWindow(QWidget):
             lambda checked, t=tag_name: self.action_delete_tag(t),
         )
 
-        # 3. Quick Toggle (+ / -)
+        # +/- reflects whether the entire selection already carries this tag.
         toggle_icon = TAG_ICONS["remove"] if is_assigned else TAG_ICONS["add"]
         toggle_style = "tag_btn_assigned" if is_assigned else "tag_btn_unassigned"
         btn_toggle = self._create_tag_button(
@@ -875,7 +876,6 @@ class MainWindow(QWidget):
             lambda checked, t=tag_name: self.toggle_specific_tag(t),
         )
 
-        # 4. Assembly
         row_layout.addWidget(lbl)
         row_layout.addStretch()
         row_layout.addWidget(btn_rename)
@@ -885,7 +885,7 @@ class MainWindow(QWidget):
         return row_widget
 
     def _restore_tag_list_selection(self):
-        """Re-applies the blue visual highlight if the user is actively filtering."""
+        """Re-highlights the active filter tag after the list is rebuilt."""
         if not self.active_filter_tag:
             return
 
@@ -896,26 +896,25 @@ class MainWindow(QWidget):
                 break
 
     def refresh_global_tags(self):
-        """Main orchestrator: clears, calculates sets, and rebuilds the tag list UI."""
+        """Rebuilds the tag sidebar, preserving scroll position and filter highlight."""
         v_scrollbar = self.tag_list_widget.verticalScrollBar()
         scroll_pos = v_scrollbar.value() if v_scrollbar else 0
         self.tag_list_widget.clear()
 
-        # Database set math
         selected_paths = self.get_selected_paths()
         shared_tags = (
             database.get_shared_tags(selected_paths) if selected_paths else set()
         )
 
-        # Build UI list
         for item_text in database.get_all_tags():
             tag_name = self._parse_tag_name(item_text)
 
+            # Each row is an empty item carrying the tag name, with a custom
+            # widget layered over it for the label and buttons.
             item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, tag_name)
             self.tag_list_widget.addItem(item)
 
-            # Let the builder encapsulate all Qt layout geometry!
             is_assigned = tag_name in shared_tags
             row_widget = self._build_tag_row_widget(tag_name, item_text, is_assigned)
 
@@ -947,6 +946,7 @@ class MainWindow(QWidget):
 
     # ========================== TIMER LOGIC ==========================
     def pick_random_image(self):
+        """Selects a random image, never the one already showing."""
         list_count = self.file_list_widget.count()
         if list_count <= 1:
             return
@@ -966,7 +966,7 @@ class MainWindow(QWidget):
         self.timer_display.setText(str(self.time_left))
         self.timer_display.show()
 
-        # ACTIVATE IMMEDIATELY!
+        # Advance straight away rather than making the user wait one full cycle.
         self.pick_random_image()
 
         self.countdown_timer.start(1000)
@@ -978,7 +978,8 @@ class MainWindow(QWidget):
         self.timer_display.hide()
 
     def update_timer(self):
-        # Auto-Pause if the user is multi-selecting
+        # Multi-selection means the user is bulk-tagging, so don't yank the
+        # selection out from under them.
         if len(self.file_list_widget.selectedItems()) > 1:
             self.timer_display.setText("Paused (Multi-Select)")
             return
@@ -994,17 +995,16 @@ class MainWindow(QWidget):
         self.timer_display.setText(str(self.time_left))
 
     def toggle_timer(self):
-        """Toggle the countdown timer on/off. Defaults to 60 seconds if no value is set."""
+        """Starts or stops the countdown, falling back to APP_TIMER_DEFAULT."""
+        # Space is a legitimate character while typing, so ignore the shortcut.
         focused = QApplication.focusWidget()
         if isinstance(focused, QLineEdit):
             return
 
-        # If the timer is already running, stop it
         if self.countdown_timer.isActive():
             self.stop_timer()
             return
 
-        # If the input field is empty and there's no saved value, default to 60
         if not self.timer_input.text().strip():
             self.timer_input.setText(APP_TIMER_DEFAULT)
             database.save_setting("timer_seconds", APP_TIMER_DEFAULT)
@@ -1029,24 +1029,21 @@ class MainWindow(QWidget):
         shortcut_draw.activated.connect(self._toggle_draw_shortcut)
 
     def _toggle_draw_shortcut(self):
-        """Ctrl+D: flips the pen tool on/off via the toolbar's checkable button,
-        which in turn emits draw_toggled and updates the canvas."""
+        """Routes Ctrl+D through the toolbar button so its state stays in sync."""
         self.drawing_toolbar.draw_btn.toggle()
 
     # ------------------------------------------------------------------
     # Global Ctrl+Z / Ctrl+Shift+Z / Delete handling
     # ------------------------------------------------------------------
-    # QLineEdit (and the internal line edit inside every QSpinBox) reserves
-    # Ctrl+Z/Ctrl+Y/Delete for its own text-editing via Qt's "shortcut
-    # override" mechanism, which silently swallows any QShortcut bound to
-    # the same keys before it ever fires. An application-wide event filter
-    # lets us intercept the raw key press before that widget gets a chance
-    # to consume it, while still special-casing *genuine* text fields (tag
-    # input, path filter, rename dialogs, etc.) so their native undo/delete
-    # still works as expected.
+    # QLineEdit — including the one inside every QSpinBox — claims Ctrl+Z and
+    # Delete for text editing through Qt's shortcut-override mechanism, which
+    # swallows an equivalent QShortcut before it can fire. Filtering at the
+    # application level catches the raw key press first, while still exempting
+    # genuine text fields so their native editing keys keep working.
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.KeyPress:
             modifiers = event.modifiers()
+            # A spinbox's internal QLineEdit doesn't count as a text field here.
             is_real_text_field = isinstance(obj, QLineEdit) and not isinstance(
                 obj.parent(), QAbstractSpinBox
             )
@@ -1059,6 +1056,7 @@ class MainWindow(QWidget):
                         self._on_undo_annotation()
                     return True
 
+                # Bare Delete only, so combinations stay available to Qt.
                 no_extra_modifiers = not (
                     modifiers
                     & (
@@ -1074,7 +1072,8 @@ class MainWindow(QWidget):
         return super().eventFilter(obj, event)
 
     def toggle_ui_visibility(self):
-        """Toggle both sidebars for a fullscreen-like focus view."""
+        """Hides or restores everything except the canvas, for a focus view."""
+        # "F" is a legitimate character while typing, so ignore the shortcut.
         focused = QApplication.focusWidget()
         if isinstance(focused, QLineEdit):
             return
@@ -1086,25 +1085,25 @@ class MainWindow(QWidget):
         self.current_image_path_label.setVisible(not should_hide)
         self.drawing_toolbar.setVisible(not should_hide)
 
-        # When sidebars are hidden, focus falls into a void.
-        # Force focus back to the main window so the shortcut keeps working.
+        # Hiding the focused widget would otherwise leave focus nowhere, and
+        # the shortcut needed to restore the UI would stop working.
         if should_hide:
             self.setFocus()
 
     def closeEvent(self, event):
-        """Ensure all background threads are stopped before the window is destroyed."""
+        """Stops every background thread before the window is destroyed."""
         self.countdown_timer.stop()
 
-        # Stop thumbnail generation
         if self.thumb_loader and self.thumb_loader.isRunning():
             self.thumb_loader.stop()
             self.thumb_loader.wait()
 
-        # Cancel and wait for all canvas loaders
+        # Cancel all of them first, then wait, so the waits overlap rather
+        # than running back to back.
         for loader in self._canvas_loaders:
             loader.cancel()
         for loader in self._canvas_loaders:
-            loader.wait(2000)  # Wait up to 2 seconds per loader
+            loader.wait(2000)
 
         self._canvas_loaders.clear()
         event.accept()

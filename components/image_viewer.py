@@ -1,41 +1,14 @@
-from PyQt6.QtWidgets import QLabel, QSizePolicy
-from PyQt6.QtGui import QPixmap, QPainter, QImage, QImageReader
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
-
-
-class ScaledImageLabel(QLabel):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.pixmap_source = None
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setMinimumSize(1, 1)
-
-    def set_image(self, pixmap: QPixmap):
-        self.pixmap_source = pixmap
-        self.update()
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        if not self.pixmap_source or self.pixmap_source.isNull():
-            return
-
-        painter = QPainter(self)
-        scaled_size = self.pixmap_source.size()
-        scaled_size.scale(self.size(), Qt.AspectRatioMode.KeepAspectRatio)
-
-        x = (self.width() - scaled_size.width()) // 2
-        y = (self.height() - scaled_size.height()) // 2
-
-        scaled_pixmap = self.pixmap_source.scaled(
-            scaled_size,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        painter.drawPixmap(x, y, scaled_pixmap)
+from PyQt6.QtGui import QImage, QImageReader
+from PyQt6.QtCore import QThread, pyqtSignal
 
 
 class CanvasLoader(QThread):
-    """Loads massive high-res canvases in the background to prevent UI lag."""
+    """Decodes one full-resolution image off the UI thread.
+
+    A loader is spawned per image selection. Because the user can click through
+    images faster than large files decode, each loader can be cancelled: it
+    still runs to completion but discards its result instead of emitting.
+    """
 
     image_ready = pyqtSignal(str, QImage)
 
@@ -45,15 +18,16 @@ class CanvasLoader(QThread):
         self._cancelled = False
 
     def cancel(self):
-        """Cooperatively signal this loader to discard its result."""
+        """Signals this loader to discard its result once decoding finishes."""
         self._cancelled = True
 
     def run(self):
         reader = QImageReader(self.file_path)
+        # Honour EXIF orientation so phone/camera photos aren't sideways.
         reader.setAutoTransform(True)
+        # Lift Qt's default decode ceiling, which rejects very large canvases.
         reader.setAllocationLimit(0)
         img = reader.read()
 
-        # Only emit if we weren't cancelled during decoding
         if not self._cancelled:
             self.image_ready.emit(self.file_path, img)
