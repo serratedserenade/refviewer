@@ -37,6 +37,9 @@ class DrawableImageLabel(QLabel):
         self.pixmap_source: QPixmap | None = None
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMinimumSize(1, 1)
+        # Lets clicking the canvas steal keyboard focus away from other
+        # widgets (e.g. the pen-size spinner), so shortcuts route correctly.
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
 
         self.drawing_enabled = False
         self.pen_color = QColor(DEFAULT_PEN_COLOR)
@@ -111,6 +114,7 @@ class DrawableImageLabel(QLabel):
     # Mouse events (drawing)
     # ------------------------------------------------------------------
     def mousePressEvent(self, event):
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
         if self.drawing_enabled and event.button() == Qt.MouseButton.LeftButton:
             point = self._widget_to_image_point(event.position())
             if point is not None:
@@ -284,6 +288,7 @@ class DrawingToolbar(QWidget):
     def _pick_color(self):
         dialog = QColorDialog(self.pen_color, self)
         dialog.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
+        dialog.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, True)
         dialog.setStyleSheet(STYLES["color_dialog"])
         if dialog.exec() == QColorDialog.DialogCode.Accepted:
             color = dialog.selectedColor()
@@ -293,6 +298,6 @@ class DrawingToolbar(QWidget):
                 self.color_changed.emit(color)
 
     def _update_color_btn(self):
-        self.color_btn.setStyleSheet(
-            STYLES["color_swatch_btn"].format(color=self.pen_color.name())
-        )
+        c = self.pen_color
+        rgba = f"rgba({c.red()}, {c.green()}, {c.blue()}, {c.alphaF():.3f})"
+        self.color_btn.setStyleSheet(STYLES["color_swatch_btn"].format(color=rgba))

@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QAbstractItemView,
     QSpinBox,
+    QAbstractSpinBox,
 )
 from PyQt6.QtGui import (
     QPixmap,
@@ -30,7 +31,7 @@ from PyQt6.QtGui import (
     QKeySequence,
     QShortcut
 )
-from PyQt6.QtCore import Qt, QTimer, QSize
+from PyQt6.QtCore import Qt, QTimer, QSize, QEvent
 
 from config import STYLES, CACHE_DIR, TAG_ICONS, TAG_BTN_SIZE, TAG_PARSE_REGEX, APP_TIMER_DEFAULT
 from file_scanner import scan_directory
@@ -61,6 +62,11 @@ class MainWindow(QWidget):
 
         self._canvas_loaders = []
         self._setup_shortcuts()
+
+        # Application-wide filter so Ctrl+Z / Ctrl+Shift+Z reliably drive
+        # annotation undo/redo even when a spinner or other non-text widget
+        # currently holds keyboard focus (see eventFilter() for details).
+        QApplication.instance().installEventFilter(self)
 
         self.path_filter_timer = QTimer(self)
         self.path_filter_timer.setSingleShot(True)
@@ -868,29 +874,40 @@ class MainWindow(QWidget):
         shortcut_random.setContext(Qt.ShortcutContext.WindowShortcut)
         shortcut_random.activated.connect(self.pick_random_image)
 
-        shortcut_undo = QShortcut(QKeySequence("Ctrl+Z"), self)
-        shortcut_undo.setContext(Qt.ShortcutContext.WindowShortcut)
-        shortcut_undo.activated.connect(self._on_undo_shortcut)
+        shortcut_draw = QShortcut(QKeySequence("Ctrl+D"), self)
+        shortcut_draw.setContext(Qt.ShortcutContext.WindowShortcut)
+        shortcut_draw.activated.connect(self._toggle_draw_shortcut)
 
-        shortcut_redo = QShortcut(QKeySequence("Ctrl+Shift+Z"), self)
-        shortcut_redo.setContext(Qt.ShortcutContext.WindowShortcut)
-        shortcut_redo.activated.connect(self._on_redo_shortcut)
+    def _toggle_draw_shortcut(self):
+        """Ctrl+D: flips the pen tool on/off via the toolbar's checkable button,
+        which in turn emits draw_toggled and updates the canvas."""
+        self.drawing_toolbar.draw_btn.toggle()
 
-
-
-    def _is_text_editing_focused(self) -> bool:
-        """True when a text-entry widget currently has focus, so global
-        keyboard shortcuts (like Ctrl+Z) don't hijack native text undo/redo."""
-        focused = QApplication.focusWidget()
-        return isinstance(focused, (QLineEdit, QSpinBox))
-
-    def _on_undo_shortcut(self):
-        if not self._is_text_editing_focused():
-            self._on_undo_annotation()
-
-    def _on_redo_shortcut(self):
-        if not self._is_text_editing_focused():
-            self._on_redo_annotation()
+    # ------------------------------------------------------------------
+    # Global Ctrl+Z / Ctrl+Shift+Z handling
+    # ------------------------------------------------------------------
+    # QLineEdit (and the internal line edit inside every QSpinBox) reserves
+    # Ctrl+Z/Ctrl+Y for its own text-undo via Qt's "shortcut override"
+    # mechanism, which silently swallows any QShortcut bound to the same
+    # keys before it ever fires. An application-wide event filter lets us
+    # intercept the raw key press before that widget gets a chance to
+    # consume it, while still special-casing *genuine* text fields (tag
+    # input, path filter, rename dialogs, etc.) so their native undo still
+    # works as expected.
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Z:
+            modifiers = event.modifiers()
+            if modifiers & Qt.KeyboardModifier.ControlModifier:
+                is_real_text_field = isinstance(obj, QLineEdit) and not isinstance(
+                    obj.parent(), QAbstractSpinBox
+                )
+                if not is_real_text_field:
+                    if modifiers & Qt.KeyboardModifier.ShiftModifier:
+                        self._on_redo_annotation()
+                    else:
+                        self._on_undo_annotation()
+                    return True
+        return super().eventFilter(obj, event)
 
     def toggle_ui_visibility(self):
         """Toggle both sidebars for a fullscreen-like focus view."""
