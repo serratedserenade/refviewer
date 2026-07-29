@@ -31,6 +31,7 @@ RefViewer is a fast (questionable, this is vibe coded after all), local desktop 
 * R to randomly select another image
 * Ctrl+D to toggle the pen annotation tool on/off
 * Ctrl+Z / Ctrl+Shift+Z to undo/redo pen annotations (ignored while typing in a text field)
+* Delete to clear all pen annotations (ignored while typing in a text field)
 
 ## Setup & Development (Using `uv` & `mise`)
 

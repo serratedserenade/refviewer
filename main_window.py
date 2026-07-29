@@ -884,29 +884,43 @@ class MainWindow(QWidget):
         self.drawing_toolbar.draw_btn.toggle()
 
     # ------------------------------------------------------------------
-    # Global Ctrl+Z / Ctrl+Shift+Z handling
+    # Global Ctrl+Z / Ctrl+Shift+Z / Delete handling
     # ------------------------------------------------------------------
     # QLineEdit (and the internal line edit inside every QSpinBox) reserves
-    # Ctrl+Z/Ctrl+Y for its own text-undo via Qt's "shortcut override"
-    # mechanism, which silently swallows any QShortcut bound to the same
-    # keys before it ever fires. An application-wide event filter lets us
-    # intercept the raw key press before that widget gets a chance to
-    # consume it, while still special-casing *genuine* text fields (tag
-    # input, path filter, rename dialogs, etc.) so their native undo still
-    # works as expected.
+    # Ctrl+Z/Ctrl+Y/Delete for its own text-editing via Qt's "shortcut
+    # override" mechanism, which silently swallows any QShortcut bound to
+    # the same keys before it ever fires. An application-wide event filter
+    # lets us intercept the raw key press before that widget gets a chance
+    # to consume it, while still special-casing *genuine* text fields (tag
+    # input, path filter, rename dialogs, etc.) so their native undo/delete
+    # still works as expected.
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Z:
+        if event.type() == QEvent.Type.KeyPress:
             modifiers = event.modifiers()
-            if modifiers & Qt.KeyboardModifier.ControlModifier:
-                is_real_text_field = isinstance(obj, QLineEdit) and not isinstance(
-                    obj.parent(), QAbstractSpinBox
-                )
-                if not is_real_text_field:
+            is_real_text_field = isinstance(obj, QLineEdit) and not isinstance(
+                obj.parent(), QAbstractSpinBox
+            )
+
+            if not is_real_text_field:
+                if event.key() == Qt.Key.Key_Z and modifiers & Qt.KeyboardModifier.ControlModifier:
                     if modifiers & Qt.KeyboardModifier.ShiftModifier:
                         self._on_redo_annotation()
                     else:
                         self._on_undo_annotation()
                     return True
+
+                no_extra_modifiers = not (
+                    modifiers
+                    & (
+                        Qt.KeyboardModifier.ControlModifier
+                        | Qt.KeyboardModifier.ShiftModifier
+                        | Qt.KeyboardModifier.AltModifier
+                    )
+                )
+                if event.key() == Qt.Key.Key_Delete and no_extra_modifiers:
+                    self._on_clear_annotations()
+                    return True
+
         return super().eventFilter(obj, event)
 
     def toggle_ui_visibility(self):
