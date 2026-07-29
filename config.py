@@ -41,6 +41,14 @@ TAG_BTN_SIZE = 20
 TAG_PARSE_REGEX = r"^(.*)\s\(\d+\)$"
 
 # ==============================================================================
+# Session History (Left Sidebar "History" Tab)
+# ==============================================================================
+# Purely in-memory / per-session (never written to disk or the database), so
+# it's wiped every time the app restarts. These are just UI sizing knobs.
+HISTORY_ICON_SIZE = 100
+HISTORY_GRID_SIZE = 110
+
+# ==============================================================================
 # Drawing / Annotation Tool Settings
 # ==============================================================================
 # Annotations are a purely transient, in-session overlay (see components/drawing_canvas.py).
@@ -155,5 +163,13 @@ STYLES = {
                       border: 1px solid #34495e; border-radius: 4px; padding: 2px; }
         QPushButton:hover { background-color: #2c3e50; }
         QPushButton:pressed { background-color: #2980b9; }
+    """,
+    "tab_widget": """
+        QTabWidget::pane { border: none; background-color: #2c3e50; top: -1px; }
+        QTabBar::tab { background-color: #1a252f; color: #ecf0f1; padding: 6px 14px;
+                       border: 1px solid #34495e; border-bottom: none;
+                       border-top-left-radius: 4px; border-top-right-radius: 4px; }
+        QTabBar::tab:selected { background-color: #2980b9; color: white; }
+        QTabBar::tab:!selected:hover { background-color: #34495e; }
     """,
 }

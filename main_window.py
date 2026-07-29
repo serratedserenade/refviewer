@@ -1,6 +1,7 @@
 import os
 import re
 import random
+import hashlib
 from PyQt6.QtWidgets import (
     QWidget,
     QLabel,
@@ -20,6 +21,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QSpinBox,
     QAbstractSpinBox,
+    QTabWidget,
 )
 from PyQt6.QtGui import (
     QPixmap,
@@ -29,11 +31,22 @@ from PyQt6.QtGui import (
     QIcon,
     QPen,
     QKeySequence,
-    QShortcut
+    QShortcut,
+    QImage,
+    QImageReader,
 )
 from PyQt6.QtCore import Qt, QTimer, QSize, QEvent
 
-from config import STYLES, CACHE_DIR, TAG_ICONS, TAG_BTN_SIZE, TAG_PARSE_REGEX, APP_TIMER_DEFAULT
+from config import (
+    STYLES,
+    CACHE_DIR,
+    TAG_ICONS,
+    TAG_BTN_SIZE,
+    TAG_PARSE_REGEX,
+    APP_TIMER_DEFAULT,
+    HISTORY_ICON_SIZE,
+    HISTORY_GRID_SIZE,
+)
 from file_scanner import scan_directory
 from components.image_viewer import CanvasLoader
 from components.drawing_canvas import DrawableImageLabel, DrawingToolbar
@@ -57,7 +70,7 @@ class MainWindow(QWidget):
         self.timer_interval = 0
         self.show_labels = False
         self.thumb_generation = 0
-        self.left_sidebar: QFrame = None
+        self.left_sidebar: QTabWidget = None
         self.right_sidebar: QFrame = None
 
         self._canvas_loaders = []
@@ -117,7 +130,16 @@ class MainWindow(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addWidget(self.splitter)
 
-    def _create_left_sidebar(self) -> QFrame:
+    def _create_left_sidebar(self) -> QTabWidget:
+        tabs = QTabWidget()
+        tabs.setStyleSheet(STYLES["tab_widget"])
+
+        tabs.addTab(self._create_images_tab(), "Images")
+        tabs.addTab(self._create_history_tab(), "History")
+
+        return tabs
+
+    def _create_images_tab(self) -> QFrame:
         sidebar = QFrame()
         sidebar.setStyleSheet(STYLES["sidebar"])
 
@@ -192,6 +214,44 @@ class MainWindow(QWidget):
         layout.addWidget(self.progress_bar)
 
         return sidebar
+
+    def _create_history_tab(self) -> QFrame:
+        """Ephemeral, session-only record of every image that has been
+        actively viewed via the Images tab or the Random-image shortcut.
+        Nothing here is persisted — it starts empty every time the app opens."""
+        history_tab = QFrame()
+        history_tab.setStyleSheet(STYLES["sidebar"])
+
+        layout = QVBoxLayout(history_tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+
+        self.history_list_widget = QListWidget()
+        self.history_list_widget.setStyleSheet(STYLES["list"])
+        self.history_list_widget.setViewMode(QListWidget.ViewMode.IconMode)
+        self.history_list_widget.setIconSize(QSize(HISTORY_ICON_SIZE, HISTORY_ICON_SIZE))
+        self.history_list_widget.setGridSize(QSize(HISTORY_GRID_SIZE, HISTORY_GRID_SIZE))
+        self.history_list_widget.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.history_list_widget.setUniformItemSizes(True)
+        self.history_list_widget.setSpacing(5)
+
+        self.history_list_widget.setDragEnabled(False)
+        self.history_list_widget.setDragDropMode(QAbstractItemView.DragDropMode.NoDragDrop)
+        self.history_list_widget.setAcceptDrops(False)
+        self.history_list_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+
+        # NOTE: intentionally its own handler, separate from on_file_item_changed,
+        # so browsing the History tab never re-adds entries to itself.
+        self.history_list_widget.currentItemChanged.connect(self.on_history_item_changed)
+
+        layout.addWidget(self.history_list_widget)
+
+        btn_clear_history = QPushButton("Clear History")
+        btn_clear_history.setStyleSheet(STYLES["button"])
+        btn_clear_history.clicked.connect(self.clear_history)
+        layout.addWidget(btn_clear_history)
+
+        return history_tab
 
     def _create_center_canvas(self) -> QFrame:
         content_area = QFrame()
@@ -516,7 +576,24 @@ class MainWindow(QWidget):
         if not current:
             return
 
-        self.active_image_path = current.data(Qt.ItemDataRole.UserRole)
+        path = current.data(Qt.ItemDataRole.UserRole)
+        self._activate_image_path(path)
+        self._add_to_history(path, current.icon())
+
+    def on_history_item_changed(self, current, previous):
+        """Selecting an item *within* the History tab should display it,
+        but must never create another entry back into the History list."""
+        if not current:
+            return
+
+        path = current.data(Qt.ItemDataRole.UserRole)
+        self._activate_image_path(path)
+
+    def _activate_image_path(self, path):
+        """Shared by both the Images list and the History list: sets the
+        active image, refreshes its tag bubbles, and kicks off a background
+        decode of the full-resolution canvas."""
+        self.active_image_path = path
         self.refresh_assigned_bubbles()
 
         # 1. Cancel all previous loaders (they'll silently discard their results)
@@ -538,6 +615,73 @@ class MainWindow(QWidget):
         """Remove a finished loader from the reference list so it can be garbage collected."""
         if loader in self._canvas_loaders:
             self._canvas_loaders.remove(loader)
+
+    # ========================== SESSION HISTORY (ephemeral) ==========================
+    # Purely in-memory: nothing here is written to the database or disk, so the
+    # History tab always starts empty when the app is (re)launched.
+
+    def _add_to_history(self, path, icon: QIcon):
+        if not path:
+            return
+
+        # Skip if this is literally the same image already at the top of
+        # the history (avoids piling up duplicates from repeated clicks).
+        top_item = self.history_list_widget.item(0)
+        if top_item and top_item.data(Qt.ItemDataRole.UserRole) == path:
+            return
+
+        if icon.isNull():
+            icon = self._make_thumbnail_icon(path)
+
+        item = QListWidgetItem(icon, "")
+        item.setData(Qt.ItemDataRole.UserRole, path)
+        item.setToolTip(path)
+
+        # Most-recently-viewed image goes to the top of the list.
+        self.history_list_widget.blockSignals(True)
+        self.history_list_widget.insertItem(0, item)
+        self.history_list_widget.blockSignals(False)
+
+    def _make_thumbnail_icon(self, file_path) -> QIcon:
+        """Fallback thumbnail generator for history entries whose Images-list
+        icon isn't available (e.g. it hasn't finished loading yet). Uses the
+        same on-disk cache scheme as ThumbnailLoader, so repeated calls (or a
+        later real thumbnail load) stay cheap and consistent."""
+        try:
+            mtime = os.path.getmtime(file_path)
+        except OSError:
+            return QIcon()
+
+        path_hash = hashlib.md5(f"{file_path}:{mtime}".encode("utf-8")).hexdigest()
+        cache_path = os.path.join(CACHE_DIR, f"{path_hash}.png")
+
+        img = QImage()
+        if os.path.exists(cache_path):
+            img.load(cache_path)
+        else:
+            reader = QImageReader(file_path)
+            reader.setAutoTransform(True)
+            reader.setAllocationLimit(0)
+            size = reader.size()
+            if size.isValid():
+                reader.setScaledSize(
+                    size.scaled(
+                        HISTORY_ICON_SIZE,
+                        HISTORY_ICON_SIZE,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                    )
+                )
+            img = reader.read()
+            if not img.isNull():
+                os.makedirs(CACHE_DIR, exist_ok=True)
+                img.save(cache_path, "PNG")
+
+        if img.isNull():
+            return QIcon()
+        return QIcon(QPixmap.fromImage(img))
+
+    def clear_history(self):
+        self.history_list_widget.clear()
 
     def on_canvas_image_ready(self, requested_path, img):
         # Prevent race conditions if the user clicked 5 images rapidly
