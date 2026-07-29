@@ -133,6 +133,12 @@ class MainWindow(QWidget):
     def _create_left_sidebar(self) -> QTabWidget:
         tabs = QTabWidget()
         tabs.setStyleSheet(STYLES["tab_widget"])
+        # QWidget subclasses like QTabWidget don't paint a QSS-defined
+        # background by default for the strip of tab-bar area beyond the
+        # last tab (that stretch is otherwise drawn using the native style's
+        # own base color, often white). Explicitly opting into a
+        # stylesheet-painted background fixes it.
+        tabs.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         tabs.addTab(self._create_images_tab(), "Images")
         tabs.addTab(self._create_history_tab(), "History")
