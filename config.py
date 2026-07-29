@@ -53,7 +53,7 @@ DRAWING_ICONS = {
     "clear": "🧹",
 }
 
-DEFAULT_PEN_COLOR = "#e74c3c"
+DEFAULT_PEN_COLOR = "#ff0000"
 DEFAULT_PEN_ALPHA = 150  # 0-255; applied to DEFAULT_PEN_COLOR on startup
 DEFAULT_PEN_WIDTH = 10
 PEN_WIDTH_MIN = 1
@@ -64,13 +64,13 @@ COLOR_SWATCH_SIZE = 24
 
 # Quick-access presets shown as their own swatches/buttons on the toolbar.
 QUICK_PEN_COLORS = {
-    "Red": "#e74c3c",
-    "Blue": "#2980b9",
-    "Yellow": "#f1c40f",
-    "Green": "#27ae60",
-    "Pink": "#e84393",
-    "Orange": "#e67e22",
-    "Cyan": "#00cec9",
+    "Red": "#ff0000",
+    "Blue": "#0000ff",
+    "Yellow": "#ffff00",
+    "Green": "#00ff00",
+    "Magenta": "#ff00ff",
+    "Orange": "#ff9900",
+    "Cyan": "#00ddff",
 }
 QUICK_PEN_ALPHA = 150  # 0-255; applied to every QUICK_PEN_COLORS swatch
 QUICK_COLOR_SWATCH_SIZE = 20
