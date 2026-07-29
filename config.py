@@ -83,4 +83,5 @@ STYLES = {
         QPushButton { background-color: #27ae60; color: white; border-radius: 3px; font-weight: bold; } 
         QPushButton:hover { background-color: #2ecc71; }
     """,
+    "current_path_label": "color: white; font-size: 12px; font-weight: bold; background: transparent;",
 }

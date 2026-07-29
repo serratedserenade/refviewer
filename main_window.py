@@ -206,6 +206,17 @@ class MainWindow(QWidget):
         self.image_viewer.setStyleSheet(STYLES["placeholder"])
         layout.addWidget(self.image_viewer)
 
+        self.current_image_path_label = QLabel("")
+        self.current_image_path_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.current_image_path_label.setStyleSheet(STYLES["current_path_label"])
+        self.current_image_path_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.current_image_path_label.setWordWrap(True)
+        layout.addWidget(self.current_image_path_label)
+
         self.bubble_container = QFrame()
         self.bubble_container.setStyleSheet("background: transparent;")
         self.bubble_layout = QHBoxLayout(self.bubble_container)
@@ -215,6 +226,7 @@ class MainWindow(QWidget):
         layout.setStretch(0, 0)
         layout.setStretch(1, 1)
         layout.setStretch(2, 0)
+        layout.setStretch(3, 0)
 
         return content_area
 
@@ -308,6 +320,7 @@ class MainWindow(QWidget):
     def perform_scan(self, path):
         self.file_list_widget.clear()
         self.clear_bubbles()
+        self.current_image_path_label.setText("")
         self.active_image_path = None
         self.active_filter_tag = None
         self.tag_list_widget.clearSelection()
@@ -726,6 +739,7 @@ class MainWindow(QWidget):
 
     def refresh_assigned_bubbles(self):
         self.clear_bubbles()
+        self.current_image_path_label.setText(self.active_image_path or "")
         if not self.active_image_path:
             return
 
