@@ -65,9 +65,11 @@ PATH_FILTER_DEBOUNCE_MS = 300
 # Folder Shortcuts (Left Sidebar "Files" Tab)
 # ==============================================================================
 FAVOURITE_ICONS = {"add": "★", "rename": "✏️", "remove": "🗑️"}
-# How the Files tab splits between the favourites list and the tree below it.
-FAVOURITES_STRETCH = 1
-FILE_TREE_STRETCH = 3
+# How the Files tab splits between the favourites list and the tree below it,
+# as a percentage of the available height. The splitter is user-draggable, so
+# this only sets where it starts.
+FAVOURITES_SPLIT_PERCENT = 25
+FILE_TREE_SPLIT_PERCENT = 75
 
 # ==============================================================================
 # Session History (Left Sidebar "History" Tab)

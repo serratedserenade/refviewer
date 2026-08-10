@@ -51,8 +51,8 @@ from config import (
     DEFAULT_TAG_FILTER_MODE,
     APP_TIMER_DEFAULT,
     FAVOURITE_ICONS,
-    FAVOURITES_STRETCH,
-    FILE_TREE_STRETCH,
+    FAVOURITES_SPLIT_PERCENT,
+    FILE_TREE_SPLIT_PERCENT,
     THUMBNAIL_SIZE,
     THUMBNAIL_GRID_SIZE,
     PATH_FILTER_DEBOUNCE_MS,
@@ -122,9 +122,25 @@ class MainWindow(QWidget):
 
     def _deferred_startup(self):
         """Restores saved shortcuts, the last folder and the tag list."""
+        self._apply_files_split()
         self.load_favourites()
         self.load_saved_folder()
         self.refresh_global_tags()
+
+    def _apply_files_split(self):
+        """Places the favourites/tree handle once the sidebar has a real height.
+
+        QSplitter reads setSizes() as pixels and hands any leftover space out by
+        size hint rather than in the ratio those numbers imply, so passing bare
+        percentages at build time lands nowhere near the intended split. Setting
+        it from the measured height is what actually honours the percentages.
+        """
+        total = self.files_splitter.height()
+        if total <= 0:
+            return
+
+        favourites = total * FAVOURITES_SPLIT_PERCENT // 100
+        self.files_splitter.setSizes([favourites, total - favourites])
 
     # ========================== UI SETUP ==========================
 
@@ -196,22 +212,21 @@ class MainWindow(QWidget):
 
         # Favourites and tree share the remaining height through a splitter, so
         # a long shortcut list can be given room without a rebuild.
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.setChildrenCollapsible(False)
-        splitter.setHandleWidth(4)
-        splitter.addWidget(self._create_favourites_panel())
+        self.files_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.files_splitter.setChildrenCollapsible(False)
+        self.files_splitter.setHandleWidth(4)
+        self.files_splitter.addWidget(self._create_favourites_panel())
 
         self.folder_tree = FolderTree()
         self.folder_tree.folder_selected.connect(self.on_tree_folder_selected)
         self.folder_tree.add_favourite_requested.connect(self.add_favourite)
-        splitter.addWidget(self.folder_tree)
+        self.files_splitter.addWidget(self.folder_tree)
 
-        splitter.setStretchFactor(0, FAVOURITES_STRETCH)
-        splitter.setStretchFactor(1, FILE_TREE_STRETCH)
-        # Sizes are relative, so this fixes the opening split at the same ratio
-        # instead of leaving it to the two widgets' size hints.
-        splitter.setSizes([FAVOURITES_STRETCH, FILE_TREE_STRETCH])
-        layout.addWidget(splitter)
+        # Keeps the ratio roughly steady as the window is resized. The opening
+        # split itself is set by _apply_files_split once the height is known.
+        self.files_splitter.setStretchFactor(0, FAVOURITES_SPLIT_PERCENT)
+        self.files_splitter.setStretchFactor(1, FILE_TREE_SPLIT_PERCENT)
+        layout.addWidget(self.files_splitter)
 
         return files_tab
 
