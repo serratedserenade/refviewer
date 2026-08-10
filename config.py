@@ -58,11 +58,16 @@ TAG_FILTER_MODE_TOOLTIPS = {
 # generated and cached at, so the two must stay in step.
 THUMBNAIL_SIZE = 100
 THUMBNAIL_GRID_SIZE = 110
-# Taller cells are needed in icon mode when filepath labels are shown.
-THUMBNAIL_GRID_SIZE_LABELLED = (120, 180)
-LIST_ROW_SIZE = (250, 24)
 # Delay before the path filter rebuilds the list, so typing doesn't rescan per key.
 PATH_FILTER_DEBOUNCE_MS = 300
+
+# ==============================================================================
+# Folder Shortcuts (Left Sidebar "Files" Tab)
+# ==============================================================================
+FAVOURITE_ICONS = {"add": "★", "rename": "✏️", "remove": "🗑️"}
+# How the Files tab splits between the favourites list and the tree below it.
+FAVOURITES_STRETCH = 1
+FILE_TREE_STRETCH = 3
 
 # ==============================================================================
 # Session History (Left Sidebar "History" Tab)
@@ -127,9 +132,19 @@ QUICK_SIZE_BTN_WIDTH = 26
 # ==============================================================================
 # Global Stylesheet Dictionary
 # ==============================================================================
+# Qt propagates a widget's stylesheet down to the tooltips that widget shows, so
+# a dark-backgrounded list hands its background to the tooltip while the text
+# stays the default black — unreadable. Applied application-wide so every
+# tooltip is pinned to the theme regardless of which widget raised it.
+TOOLTIP_STYLE = """
+    QToolTip { background-color: #1a252f; color: #ecf0f1; font-size: 11px;
+               border: 1px solid #7f8c8d; border-radius: 3px; padding: 4px; }
+"""
+
 # Keys are referenced as STYLES["<key>"] throughout the UI. Entries containing
 # a {color} placeholder are formatted with a live value at runtime.
 STYLES = {
+    "tooltip": TOOLTIP_STYLE,
     "sidebar": "background-color: #2c3e50;",
     "right_sidebar": "background-color: #34495e;",
     "content": "background-color: #000000;",
@@ -146,16 +161,34 @@ STYLES = {
         QPushButton:hover { background-color: #ecf0f1; }
         QPushButton:pressed { background-color: #dcdde1; }
     """,
-    "list": """
+    # The tooltip rule is repeated inside the styles of the widgets that raise
+    # path tooltips: a widget's own stylesheet outranks the application-wide one,
+    # so without it these two would still hand their background to the tooltip.
+    "list": TOOLTIP_STYLE
+    + """
         QListWidget { background-color: #1a252f; color: #ffffff; font-size: 11px;
                       border: 1px solid #34495e; border-radius: 4px; padding: 2px; }
-        QListWidget::item:selected { background-color: #2980b9; } 
+        QListWidget::item:selected { background-color: #2980b9; }
+    """,
+    "tree": TOOLTIP_STYLE
+    + """
+        QTreeView { background-color: #1a252f; color: #ffffff; font-size: 11px;
+                    border: 1px solid #34495e; border-radius: 4px; padding: 2px; }
+        QTreeView::item { padding: 2px 0px; }
+        QTreeView::item:hover { background-color: #34495e; }
+        QTreeView::item:selected { background-color: #2980b9; }
     """,
     "bubble": """
         QLabel { background-color: #2980b9; color: #ecf0f1; font-size: 11px; font-weight: bold;
                  border-radius: 10px; padding: 4px 10px; margin-right: 5px; }
     """,
     "tag_row_label": "color: white; background: transparent; font-size: 11px;",
+    "menu": """
+        QMenu { background-color: #2c3e50; color: #ecf0f1; font-size: 11px;
+                border: 1px solid #34495e; padding: 4px; }
+        QMenu::item { padding: 4px 14px; border-radius: 3px; }
+        QMenu::item:selected { background-color: #2980b9; }
+    """,
     "tag_checkbox": """
         QCheckBox { background: transparent; spacing: 0px; }
         QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid #7f8c8d;

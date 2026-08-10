@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import threading
 
@@ -63,6 +64,40 @@ def get_setting(key: str) -> str:
         cursor = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
         row = cursor.fetchone()
         return row[0] if row else ""
+
+
+# Favourite folders live in the settings table as a single JSON value rather
+# than in their own table: it is a short, ordered, single-user list, and JSON
+# keeps each name paired with its path without needing a schema migration.
+FAVOURITES_KEY = "favourite_folders"
+
+
+def get_favourite_folders() -> list[dict]:
+    """Returns the saved folder shortcuts as {"name", "path"} dicts, in order."""
+    raw = get_setting(FAVOURITES_KEY)
+    if not raw:
+        return []
+
+    try:
+        stored = json.loads(raw)
+    except json.JSONDecodeError:
+        # A value corrupted by a partial write or hand-editing shouldn't stop
+        # the app from starting; an empty list just means no shortcuts.
+        return []
+
+    if not isinstance(stored, list):
+        return []
+
+    return [
+        {"name": str(entry["name"]), "path": str(entry["path"])}
+        for entry in stored
+        if isinstance(entry, dict) and entry.get("name") and entry.get("path")
+    ]
+
+
+def save_favourite_folders(favourites: list[dict]):
+    """Replaces the stored shortcuts with `favourites`, order included."""
+    save_setting(FAVOURITES_KEY, json.dumps(favourites))
 
 
 def add_tag_to_image(filepath: str, tag_name: str):

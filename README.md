@@ -18,7 +18,9 @@ RefViewer is a fast (questionable, this is vibe coded after all), local desktop 
 - **Global Tagging System:** Quickly add, remove, and manage tags using quick-toggle `+`/`-` buttons. Tags persist in an SQLite database and are linked to absolute file paths.
 - **Cross-Folder Filtering:** Click a tag to instantly see all images associated with that tag, even if they live outside your currently selected folder (outlined in yellow).
 - **Combined Tag Filtering:** Tick the checkbox on any number of tags to filter by a combination, and use the **Match: AND / OR** radio buttons above the list to choose how they combine — `AND` shows only images carrying *every* ticked tag, `OR` shows images carrying *at least one*. Clicking a tag row still does a plain single-tag filter, and clears all the checkboxes; likewise ticking a box drops the click filter. The two are separate modes rather than stacking.
-- **Path Tooltips:** Hover any image in the Images list (or the History grid) to see its full path, which is handy in thumbnail mode where no text is shown.
+- **Built-in File Tree:** The left sidebar opens on a **Files** tab holding a directory tree of the whole filesystem, so picking a folder no longer means going through the Browse dialog. Click any folder to scan it; the sidebar jumps straight to Images with the results. The tree opens on your home directory, and reveals whichever folder you last had loaded. The current folder and the Browse button live on this tab too, since this is where folders get chosen — Browse is still there if you prefer a dialog, and either way the tree and the dialog stay in step.
+- **Favourite Folders:** Above the tree sits a list of saved shortcuts, split off by a draggable handle so you can give it as much room as you need. Save the current folder with **★ Add**, or right-click any folder in the tree and choose *Add to Favourites*. Clicking a favourite loads it instantly. Right-click one to **Rename** it — the label is only cosmetic, so renaming never changes the folder it points at — or to **Remove** it. Favourites are stored in the database and come back next launch; hover any of them to see the full path.
+- **Path Tooltips:** The Images list is always a thumbnail grid and never draws filepaths, so hovering a thumbnail (or a History entry) to see its full path is *the* way to identify a file. Tooltips are styled to match the dark theme.
 - **Multi-Select Bulk Tagging:** Shift/Ctrl+Click to select many images and tag them in one go. The `+`/`-` state shows a tag as assigned only when *every* selected image has it.
 - **Session History Tab:** The left sidebar is tabbed into "Images" and "History." Every image you actively view (by clicking it in Images, or via the Random-image shortcut) gets added to History as a thumbnail, most-recent first. It's purely in-memory/ephemeral — clicking around inside History itself doesn't add more entries, and the whole list clears automatically when you close the app (or manually via the "Clear History" button). History keeps the **100** most recent images; older entries are dropped as new ones arrive.
 - **Blazing Fast, Uncapped Rendering:** Multi-threaded background thumbnail generation. Image decoding allocation limits are completely disabled to support massive, high-res canvas files without crashing.
@@ -108,6 +110,8 @@ To clear out old sideways images or broken thumbnails, just delete the thumbnail
     ┃ ┣ __init__.py
     ┃ ┣ image_viewer.py        # CanvasLoader: background full-res decoding
     ┃ ┣ drawing_canvas.py      # Annotation canvas + pen toolbar
+    ┃ ┣ favourites.py          # Saved folder shortcuts for the "Files" tab
+    ┃ ┣ file_tree.py           # Directory tree for the "Files" tab
     ┃ ┗ thumbnail_loader.py    # Multi-threaded concurrent cache generation
     ┣ config.py                # UI styling, tunable constants, cross-platform paths
     ┣ database.py              # SQLite3 data management & tag schema
@@ -116,7 +120,7 @@ To clear out old sideways images or broken thumbnails, just delete the thumbnail
     ┣ main.py                  # Standard app entry point
     ┗ mise.toml                # Task runner commands (npm run style)
 
-`ARCHITECTURE.md` has a much deeper walkthrough of the Qt patterns, database schema, and threading model — but note it predates the History tab and the annotation tool, so it doesn't cover those.
+`ARCHITECTURE.md` has a much deeper walkthrough of the Qt patterns, database schema, and threading model — but note it predates the Files tab, the History tab and the annotation tool, so it doesn't cover those.
 
 # License
 

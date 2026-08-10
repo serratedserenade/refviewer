@@ -50,10 +50,11 @@ from config import (
     TAG_FILTER_MODE_TOOLTIPS,
     DEFAULT_TAG_FILTER_MODE,
     APP_TIMER_DEFAULT,
+    FAVOURITE_ICONS,
+    FAVOURITES_STRETCH,
+    FILE_TREE_STRETCH,
     THUMBNAIL_SIZE,
     THUMBNAIL_GRID_SIZE,
-    THUMBNAIL_GRID_SIZE_LABELLED,
-    LIST_ROW_SIZE,
     PATH_FILTER_DEBOUNCE_MS,
     HISTORY_ICON_SIZE,
     HISTORY_GRID_SIZE,
@@ -62,6 +63,8 @@ from config import (
 from file_scanner import scan_directory
 from components.image_viewer import CanvasLoader
 from components.drawing_canvas import DrawableImageLabel, DrawingToolbar
+from components.favourites import FavouritesList
+from components.file_tree import FolderTree
 from components.thumbnail_loader import ThumbnailLoader
 import database
 
@@ -85,8 +88,6 @@ class MainWindow(QWidget):
         # Live checkbox widgets by tag name, rebuilt with the tag list. Lets the
         # boxes be cleared without destroying the rows mid-click.
         self._tag_checkboxes: dict[str, QCheckBox] = {}
-        self.is_icon_view = True
-        self.show_labels = False
         self.thumb_loader = None
         # Incremented per list rebuild so results from superseded thumbnail
         # loaders can be recognised and discarded.
@@ -103,6 +104,10 @@ class MainWindow(QWidget):
         # application-wide to survive Qt's shortcut-override mechanism.
         QApplication.instance().installEventFilter(self)
 
+        # See config.TOOLTIP_STYLE: set application-wide so no widget's own dark
+        # stylesheet leaks into the tooltips it raises.
+        QApplication.instance().setStyleSheet(STYLES["tooltip"])
+
         self.path_filter_timer = QTimer(self)
         self.path_filter_timer.setSingleShot(True)
         self.path_filter_timer.timeout.connect(self.update_file_list)
@@ -116,7 +121,8 @@ class MainWindow(QWidget):
         QTimer.singleShot(0, self._deferred_startup)
 
     def _deferred_startup(self):
-        """Restores the last folder and tag list once the window is visible."""
+        """Restores saved shortcuts, the last folder and the tag list."""
+        self.load_favourites()
         self.load_saved_folder()
         self.refresh_global_tags()
 
@@ -157,10 +163,85 @@ class MainWindow(QWidget):
         # native style (often white) instead of the stylesheet background.
         tabs.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
-        tabs.addTab(self._create_images_tab(), "Images")
+        # Indices are kept because selecting a folder in Files jumps to Images.
+        self.files_tab_index = tabs.addTab(self._create_files_tab(), "Files")
+        self.images_tab_index = tabs.addTab(self._create_images_tab(), "Images")
         tabs.addTab(self._create_history_tab(), "History")
 
         return tabs
+
+    def _create_files_tab(self) -> QFrame:
+        """Builds the Files tab: current folder, favourites, and a directory tree.
+
+        This is where a folder gets chosen, so the path display and the Browse
+        dialog live here rather than alongside the images they produce.
+        """
+        files_tab = QFrame()
+        files_tab.setStyleSheet(STYLES["sidebar"])
+
+        layout = QVBoxLayout(files_tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+
+        self.path_display = QLineEdit()
+        self.path_display.setPlaceholderText("No folder selected")
+        self.path_display.setReadOnly(True)
+        self.path_display.setStyleSheet(STYLES["input"])
+        layout.addWidget(self.path_display)
+
+        btn_browse = QPushButton("Browse")
+        btn_browse.setStyleSheet(STYLES["button"])
+        btn_browse.clicked.connect(self.select_folder)
+        layout.addWidget(btn_browse)
+
+        # Favourites and tree share the remaining height through a splitter, so
+        # a long shortcut list can be given room without a rebuild.
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(4)
+        splitter.addWidget(self._create_favourites_panel())
+
+        self.folder_tree = FolderTree()
+        self.folder_tree.folder_selected.connect(self.on_tree_folder_selected)
+        self.folder_tree.add_favourite_requested.connect(self.add_favourite)
+        splitter.addWidget(self.folder_tree)
+
+        splitter.setStretchFactor(0, FAVOURITES_STRETCH)
+        splitter.setStretchFactor(1, FILE_TREE_STRETCH)
+        # Sizes are relative, so this fixes the opening split at the same ratio
+        # instead of leaving it to the two widgets' size hints.
+        splitter.setSizes([FAVOURITES_STRETCH, FILE_TREE_STRETCH])
+        layout.addWidget(splitter)
+
+        return files_tab
+
+    def _create_favourites_panel(self) -> QFrame:
+        """Builds the saved-shortcuts section that sits above the tree."""
+        panel = QFrame()
+        panel.setStyleSheet(STYLES["sidebar"])
+
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.addWidget(self._create_styled_label("Favourites:"))
+        header.addStretch()
+
+        self.btn_add_favourite = QPushButton(f"{FAVOURITE_ICONS['add']} Add")
+        self.btn_add_favourite.setStyleSheet(STYLES["button"])
+        self.btn_add_favourite.setToolTip("Save the current folder as a shortcut")
+        self.btn_add_favourite.clicked.connect(self.add_current_folder_to_favourites)
+        header.addWidget(self.btn_add_favourite)
+        layout.addLayout(header)
+
+        self.favourites_list = FavouritesList()
+        self.favourites_list.folder_selected.connect(self.on_favourite_selected)
+        self.favourites_list.favourites_changed.connect(self.save_favourites)
+        layout.addWidget(self.favourites_list)
+
+        return panel
 
     def _create_images_tab(self) -> QFrame:
         sidebar = QFrame()
@@ -170,39 +251,21 @@ class MainWindow(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
 
-        # Selected folder
-        self.path_display = QLineEdit()
-        self.path_display.setPlaceholderText("No folder selected")
-        self.path_display.setReadOnly(True)
-        self.path_display.setStyleSheet(STYLES["input"])
-        layout.addWidget(self.path_display)
-
-        # View controls
-        buttons_row = QVBoxLayout()
-        buttons_row.setContentsMargins(0, 0, 0, 0)
-        buttons_row.setSpacing(5)
-
-        btn_browse = QPushButton("Browse")
-        btn_browse.setStyleSheet(STYLES["button"])
-        btn_browse.clicked.connect(self.select_folder)
-
-        btn_toggle = QPushButton("Paths/Thumbnails")
-        btn_toggle.setStyleSheet(STYLES["button"])
-        btn_toggle.clicked.connect(self.toggle_view_mode)
-
-        btn_toggle_text = QPushButton("Paths on Thumbnails")
-        btn_toggle_text.setStyleSheet(STYLES["button"])
-        btn_toggle_text.clicked.connect(self.toggle_text_mode)
-
-        buttons_row.addWidget(btn_browse)
-        buttons_row.addWidget(btn_toggle)
-        buttons_row.addWidget(btn_toggle_text)
-        layout.addLayout(buttons_row)
-
-        # Image list
+        # Image list. Always a thumbnail grid with no text, so these settings
+        # are fixed here rather than reapplied on every rebuild; the full path
+        # is carried by each item's tooltip instead.
         self.file_list_widget = QListWidget()
         self.file_list_widget.setStyleSheet(STYLES["list"])
         self.file_list_widget.currentItemChanged.connect(self.on_file_item_changed)
+
+        self.file_list_widget.setViewMode(QListWidget.ViewMode.IconMode)
+        self.file_list_widget.setIconSize(QSize(THUMBNAIL_SIZE, THUMBNAIL_SIZE))
+        self.file_list_widget.setGridSize(
+            QSize(THUMBNAIL_GRID_SIZE, THUMBNAIL_GRID_SIZE)
+        )
+        self.file_list_widget.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.file_list_widget.setUniformItemSizes(True)
+        self.file_list_widget.setSpacing(5)
 
         self.file_list_widget.setDragEnabled(False)
         self.file_list_widget.setDragDropMode(QAbstractItemView.DragDropMode.NoDragDrop)
@@ -449,15 +512,59 @@ class MainWindow(QWidget):
     def load_saved_folder(self):
         if past_path := database.get_setting("last_folder"):
             self.path_display.setText(past_path)
+            # Reveal it in the tree too, so the sidebar opens where you left off.
+            self.folder_tree.expand_to(past_path)
             self.perform_scan(past_path)
 
     def select_folder(self):
         if folder_path := QFileDialog.getExistingDirectory(
             self, "Select Image Directory"
         ):
-            self.path_display.setText(folder_path)
-            database.save_setting("last_folder", folder_path)
-            self.perform_scan(folder_path)
+            self.folder_tree.expand_to(folder_path)
+            self._load_folder(folder_path)
+
+    def on_tree_folder_selected(self, folder_path):
+        """Loads a folder clicked in the Files tree, as the Browse dialog would.
+
+        Switched before the scan runs, since scanning blocks the UI thread and
+        the result is what the Images tab is about to show.
+        """
+        self.left_sidebar.setCurrentIndex(self.images_tab_index)
+        self._load_folder(folder_path)
+
+    def on_favourite_selected(self, folder_path):
+        """Loads a saved shortcut, revealing it in the tree on the way past."""
+        self.folder_tree.expand_to(folder_path)
+        self.left_sidebar.setCurrentIndex(self.images_tab_index)
+        self._load_folder(folder_path)
+
+    # ========================== FAVOURITES ==========================
+
+    def load_favourites(self):
+        self.favourites_list.set_favourites(database.get_favourite_folders())
+
+    def save_favourites(self):
+        """Persists the list after any add, rename or removal."""
+        database.save_favourite_folders(self.favourites_list.favourites())
+
+    def add_favourite(self, folder_path):
+        """Saves `folder_path` as a shortcut, warning if it is already there."""
+        if not folder_path:
+            return
+
+        if not self.favourites_list.add_folder(folder_path):
+            QMessageBox.information(
+                self, "Favourites", f"'{folder_path}' is already a favourite."
+            )
+
+    def add_current_folder_to_favourites(self):
+        self.add_favourite(self.path_display.text().strip())
+
+    def _load_folder(self, folder_path):
+        """Remembers `folder_path` as the active folder and scans it."""
+        self.path_display.setText(folder_path)
+        database.save_setting("last_folder", folder_path)
+        self.perform_scan(folder_path)
 
     def perform_scan(self, path):
         self.file_list_widget.clear()
@@ -484,17 +591,8 @@ class MainWindow(QWidget):
 
         self.update_file_list()
 
-    def toggle_view_mode(self):
-        self.is_icon_view = not self.is_icon_view
-        self.update_file_list()
-
-    def toggle_text_mode(self):
-        """Show or hide the filepaths underneath the images."""
-        self.show_labels = not self.show_labels
-        self.update_file_list()
-
     def update_file_list(self):
-        """Rebuilds the image list from the current folder, tag filter and search."""
+        """Rebuilds the image grid from the current folder, tag filter and search."""
         if self.thumb_loader and self.thumb_loader.isRunning():
             self.thumb_loader.stop()
             self.thumb_loader.wait()
@@ -504,28 +602,7 @@ class MainWindow(QWidget):
 
         self.file_list_widget.clear()
 
-        # Cells grow taller when filepath labels sit beneath each thumbnail.
-        if self.show_labels:
-            grid_size = QSize(*THUMBNAIL_GRID_SIZE_LABELLED)
-            icon_align = Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom
-        else:
-            grid_size = QSize(THUMBNAIL_GRID_SIZE, THUMBNAIL_GRID_SIZE)
-            icon_align = Qt.AlignmentFlag.AlignCenter
-
-        if self.is_icon_view:
-            self.file_list_widget.setViewMode(QListWidget.ViewMode.IconMode)
-            self.file_list_widget.setIconSize(QSize(THUMBNAIL_SIZE, THUMBNAIL_SIZE))
-            self.file_list_widget.setResizeMode(QListWidget.ResizeMode.Adjust)
-            self.file_list_widget.setGridSize(grid_size)
-            self.file_list_widget.setSpacing(5)
-            self.file_list_widget.setWordWrap(True)
-            self.file_list_widget.setUniformItemSizes(True)
-        else:
-            self.file_list_widget.setViewMode(QListWidget.ViewMode.ListMode)
-            self.file_list_widget.setGridSize(QSize())
-            self.file_list_widget.setSpacing(0)
-            self.file_list_widget.setWordWrap(False)
-            self.file_list_widget.setUniformItemSizes(True)
+        grid_size = QSize(THUMBNAIL_GRID_SIZE, THUMBNAIL_GRID_SIZE)
 
         # A tag filter draws from the whole database, so it can return images
         # from outside the scanned folder; otherwise use the scan directly.
@@ -544,43 +621,26 @@ class MainWindow(QWidget):
         if filter_text:
             display_files = [f for f in display_files if filter_text in f.lower()]
 
+        # Membership is tested once per displayed file, so a set keeps a large
+        # tag filter over a large scan from going quadratic.
+        scanned_lookup = set(self.scanned_files)
+
         items_for_worker = []
         for row, file_path in enumerate(display_files):
             # Anything outside the current scan is highlighted in yellow.
-            is_external = file_path not in self.scanned_files
+            is_external = file_path not in scanned_lookup
 
-            # List mode is text-only, so it always shows the path; icon mode
-            # defers to the label toggle.
-            if not self.is_icon_view or self.show_labels:
-                display_text = file_path
-            else:
-                display_text = ""
-
-            item = QListWidgetItem(display_text)
+            # Nothing in the grid is labelled, so the tooltip is the only place
+            # the full path is shown.
+            item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, file_path)
-            # Always the full path, since icon mode usually shows no text and
-            # list mode elides long paths.
             item.setToolTip(file_path)
-
-            if self.is_icon_view:
-                item.setSizeHint(grid_size)
-                item.setTextAlignment(icon_align)
-            else:
-                item.setSizeHint(QSize(*LIST_ROW_SIZE))
-                item.setTextAlignment(
-                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-                )
-
-            if not self.is_icon_view and is_external:
-                item.setForeground(QColor("yellow"))
+            item.setSizeHint(grid_size)
 
             self.file_list_widget.addItem(item)
+            items_for_worker.append((row, file_path, is_external))
 
-            # Only icon mode needs thumbnails generated.
-            if self.is_icon_view:
-                items_for_worker.append((row, file_path, is_external))
-
-        if self.is_icon_view and items_for_worker:
+        if items_for_worker:
             self.loaded_thumbnail_count = 0
             self.progress_bar.setMaximum(len(items_for_worker))
             self.progress_bar.setValue(0)
@@ -626,7 +686,6 @@ class MainWindow(QWidget):
             painter.setPen(pen)
             painter.drawRect(0, 0, pixmap.width(), pixmap.height())
             painter.end()
-            item.setForeground(QColor("yellow"))
 
         item.setIcon(QIcon(pixmap))
 
