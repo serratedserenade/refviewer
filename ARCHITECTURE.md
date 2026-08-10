@@ -231,7 +231,7 @@ for root, _, files in os.walk(clean_path):
 - `dirs`: Subdirectory names (unused here, hence `_`)
 - `files`: Filenames in the current directory
 
-The function filters for files ending in standard image extensions (`.png`, `.jpg`, `.jpeg`, `.bmp`, `.gif`, `.webp`, `.tiff`, `.ico`) and returns absolute paths.
+The function filters for files ending in standard image extensions (`.png`, `.jpg`, `.jpeg`, `.webp`) and returns absolute paths.
 
 ### Input Sanitization
 ```python

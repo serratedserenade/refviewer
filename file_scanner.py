@@ -1,6 +1,10 @@
 import os
 
-IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tiff", ".ico")
+# Deliberately narrow: only the formats worth carrying as reference images.
+# .tiff would not work regardless — the PyQt6 wheel's TIFF plugin links against
+# libtiff.so.5, which current distributions no longer ship, so Qt cannot decode
+# TIFF at all and those files scanned but never rendered.
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
 
 
 def scan_directory(path: str) -> list[str]:
