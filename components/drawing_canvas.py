@@ -313,6 +313,18 @@ class DrawableImageLabel(QLabel):
         self.zoom_at(event.position(), factor)
         event.accept()
 
+    def keyPressEvent(self, event):
+        # Ignore arrow keys so they propagate to MainWindow / eventFilter for library traversal
+        if event.key() in (
+            Qt.Key.Key_Left,
+            Qt.Key.Key_Right,
+            Qt.Key.Key_Up,
+            Qt.Key.Key_Down,
+        ):
+            event.ignore()
+            return
+        super().keyPressEvent(event)
+
     # ------------------------------------------------------------------
     # Painting
     # ------------------------------------------------------------------

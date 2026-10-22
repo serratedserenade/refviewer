@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QRadioButton,
     QButtonGroup,
     QMenu,
+    QSlider,
 )
 from PyQt6.QtGui import (
     QPixmap,
@@ -853,6 +854,40 @@ class MainWindow(QWidget):
             for item in self.file_list_widget.selectedItems()
         ]
 
+    def _get_active_image_list(self) -> QListWidget:
+        """Returns the currently active list widget (History or Images)."""
+        if (
+            self.left_sidebar
+            and hasattr(self, "history_tab_index")
+            and self.left_sidebar.currentIndex() == self.history_tab_index
+        ):
+            return self.history_list_widget
+        return self.file_list_widget
+
+    def select_next_image(self):
+        """Advances to the next image in the active library list."""
+        target_list = self._get_active_image_list()
+        count = target_list.count()
+        if count == 0:
+            return
+        current = target_list.currentRow()
+        if current < 0:
+            target_list.setCurrentRow(0)
+        elif current < count - 1:
+            target_list.setCurrentRow(current + 1)
+
+    def select_previous_image(self):
+        """Moves to the previous image in the active library list."""
+        target_list = self._get_active_image_list()
+        count = target_list.count()
+        if count == 0:
+            return
+        current = target_list.currentRow()
+        if current < 0:
+            target_list.setCurrentRow(0)
+        elif current > 0:
+            target_list.setCurrentRow(current - 1)
+
     def on_selection_changed(self):
         """Recomputes tag assignment state, which depends on the whole selection."""
         self.refresh_global_tags()
@@ -1413,6 +1448,12 @@ class MainWindow(QWidget):
             is_real_text_field = isinstance(obj, QLineEdit) and not isinstance(
                 obj.parent(), QAbstractSpinBox
             )
+            is_tree = hasattr(self, "folder_tree") and (
+                obj is self.folder_tree or self.folder_tree.isAncestorOf(obj)
+            )
+            is_spinbox_or_slider = isinstance(obj, (QAbstractSpinBox, QSlider)) or isinstance(
+                getattr(obj, "parent", lambda: None)(), QAbstractSpinBox
+            )
 
             if not is_real_text_field:
                 if event.key() == Qt.Key.Key_Z and modifiers & Qt.KeyboardModifier.ControlModifier:
@@ -1437,6 +1478,47 @@ class MainWindow(QWidget):
                     # Bare Delete: delete with warning prompt
                     self.delete_selected_images(confirm=True)
                     return True
+
+                # Arrow key library traversal when interacting with canvas, window, etc.
+                is_list_widget = (
+                    obj is getattr(self, "file_list_widget", None)
+                    or obj is getattr(self, "history_list_widget", None)
+                )
+                if not is_tree and not is_spinbox_or_slider and not is_list_widget:
+                    no_ctrl_alt = not (
+                        modifiers
+                        & (
+                            Qt.KeyboardModifier.ControlModifier
+                            | Qt.KeyboardModifier.AltModifier
+                        )
+                    )
+                    if no_ctrl_alt:
+                        if event.key() == Qt.Key.Key_Right:
+                            self.select_next_image()
+                            return True
+                        if event.key() == Qt.Key.Key_Left:
+                            self.select_previous_image()
+                            return True
+                        if event.key() == Qt.Key.Key_Down:
+                            target_list = self._get_active_image_list()
+                            if target_list.isVisible():
+                                old_row = target_list.currentRow()
+                                target_list.keyPressEvent(event)
+                                if target_list.currentRow() == old_row:
+                                    self.select_next_image()
+                            else:
+                                self.select_next_image()
+                            return True
+                        if event.key() == Qt.Key.Key_Up:
+                            target_list = self._get_active_image_list()
+                            if target_list.isVisible():
+                                old_row = target_list.currentRow()
+                                target_list.keyPressEvent(event)
+                                if target_list.currentRow() == old_row:
+                                    self.select_previous_image()
+                            else:
+                                self.select_previous_image()
+                            return True
 
         return super().eventFilter(obj, event)
 
