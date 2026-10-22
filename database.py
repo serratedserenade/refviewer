@@ -189,6 +189,29 @@ def get_all_tags() -> list[str]:
         return [f"{row[0]} ({row[1]})" for row in cursor.fetchall()]
 
 
+def remove_images(filepaths: list[str]):
+    """Removes image entries and their associated tag relationships."""
+    if not filepaths:
+        return
+
+    with _get_connection() as conn:
+        for i in range(0, len(filepaths), SQL_PARAM_CHUNK):
+            chunk = filepaths[i : i + SQL_PARAM_CHUNK]
+            placeholders = ", ".join("?" for _ in chunk)
+            conn.execute(
+                f"""
+                DELETE FROM image_tags 
+                WHERE image_id IN (SELECT id FROM images WHERE filepath IN ({placeholders}))
+            """,
+                chunk,
+            )
+            conn.execute(
+                f"DELETE FROM images WHERE filepath IN ({placeholders})",
+                chunk,
+            )
+        conn.commit()
+
+
 def remove_tag_from_image(filepath: str, tag_name: str):
     with _get_connection() as conn:
         conn.execute(

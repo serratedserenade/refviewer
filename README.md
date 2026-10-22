@@ -25,19 +25,27 @@ RefViewer is a fast (questionable, this is vibe coded after all), local desktop 
 - **Session History Tab:** The left sidebar is tabbed into "Images" and "History." Every image you actively view (by clicking it in Images, or via the Random-image shortcut) gets added to History as a thumbnail, most-recent first. It's purely in-memory/ephemeral — clicking around inside History itself doesn't add more entries, and the whole list clears automatically when you close the app (or manually via the "Clear History" button). History keeps the **100** most recent images; older entries are dropped as new ones arrive.
 - **Blazing Fast, Uncapped Rendering:** Multi-threaded background thumbnail generation. Image decoding allocation limits are completely disabled to support massive, high-res canvas files without crashing.
 - **EXIF Aware:** Automatically reads EXIF metadata to ensure phone/camera photos aren't rotated sideways.
-- **Pen Annotations:** Draw directly on top of the currently viewed image with a configurable pen color (including alpha/opacity) and size — great for pointing out proportions, lighting notes, or gesture lines. Quick-access swatches (Red, Blue, Yellow, Green, Magenta, Orange, Cyan) and size presets (1/2/5/10/20) sit on the toolbar for one-click switching, and the swatches preview whatever opacity you currently have set. Fully non-destructive: annotations are never saved to the image file or database, and are automatically cleared the moment you switch images or close the app. Supports Undo/Redo (`Ctrl+Z` / `Ctrl+Shift+Z`), up to **500** retained strokes — past that the oldest stroke is dropped. Clearing annotations (`Delete` or the 🧹 button) also wipes the undo/redo history, so a clear cannot be undone. Both the toolbar and filepath label hide automatically in fullscreen focus mode (`F`).
+- **Zoom & Pan Canvas:** Smoothly zoom and move around large images. Scroll the mouse wheel to zoom in and out centered directly at your cursor position (or use `Ctrl++`/`Ctrl+-`). Click and drag with the left mouse button (when pen annotations are off), middle mouse button, or right mouse button to pan freely. Double-click or press `Ctrl+0` to instantly reset zoom and pan back to fit-to-window view. Annotations scale and stay locked to image features during zoom and pan.
+- **Image File Deletion:** Clean out unwanted images directly within the app. Press `Delete` to delete the currently active or multi-selected image(s) with a confirmation warning dialog. Use `Shift+Delete` to bypass the prompt and delete immediately. Deleting removes the file from disk, strips its SQLite tag records, purges its cached thumbnails, and cleanly advances the viewer to the next image in line. Right-click context menus are also provided on both the Images and History lists.
+- **Pen Annotations:** Draw directly on top of the currently viewed image with a configurable pen color (including alpha/opacity) and size — great for pointing out proportions, lighting notes, or gesture lines. Quick-access swatches (Red, Blue, Yellow, Green, Magenta, Orange, Cyan) and size presets (1/2/5/10/20) sit on the toolbar for one-click switching, and the swatches preview whatever opacity you currently have set. Fully non-destructive: annotations are never saved to the image file or database, and are automatically cleared the moment you switch images or close the app. Supports Undo/Redo (`Ctrl+Z` / `Ctrl+Shift+Z`), up to **500** retained strokes — past that the oldest stroke is dropped. Clearing annotations (via the 🧹 button or `Ctrl+Delete` / `Alt+Delete`) wipes the undo/redo history. Both the toolbar and filepath label hide automatically in fullscreen focus mode (`F`).
 - **Filepath Display:** The full path of the currently viewed image is shown above the tag chips, and the text is selectable for easy copying.
 - **Speed Drawing Timer:** A configurable countdown timer that loops and randomly selects a *new* image when it hits zero—perfect for gesture drawing or art practice. It auto-pauses while you have multiple images selected, so bulk tagging doesn't get interrupted.
 - **Hot-Reloading:** Built-in `watchfiles` support for instant UI restarts on file save during development.
 
 ## Shortcuts
 
-* F to toggle sidebars
+* F to toggle sidebars (fullscreen focus view)
 * Space to toggle timer start and stop. Defaults to 60 seconds if you haven't set a value yet.
 * R to randomly select another image
 * Ctrl+D to toggle the pen annotation tool on/off
+* Scroll Wheel to zoom in/out centered at cursor
+* Left Drag (when pen off), Middle Drag, or Right Drag to pan the canvas
+* Double Click or Ctrl+0 to reset zoom and pan back to fit
+* Ctrl++ / Ctrl+- to zoom in and out
 * Ctrl+Z / Ctrl+Shift+Z to undo/redo pen annotations (ignored while typing in a text field)
-* Delete to clear all pen annotations and their undo history (ignored while typing in a text field)
+* Delete to delete current or selected image file(s) with confirmation prompt
+* Shift+Delete to delete current or selected image file(s) immediately without prompt
+* Ctrl+Delete / Alt+Delete (or 🧹 button) to clear pen annotations
 
 ## Setup & Development (Using `uv` & `mise`)
 

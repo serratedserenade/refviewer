@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QColorDialog,
 )
 from PyQt6.QtGui import QPixmap, QPainter, QPainterPath, QPen, QColor
-from PyQt6.QtCore import Qt, QPointF, pyqtSignal
+from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal
 
 from config import (
     STYLES,
@@ -72,24 +72,93 @@ class DrawableImageLabel(QLabel):
         self._draw_scale = 1.0
         self._draw_offset = QPointF(0, 0)
 
+        # Zoom and pan state
+        self._zoom_factor: float = 1.0
+        self._pan_offset: QPointF = QPointF(0, 0)
+        self._is_panning: bool = False
+        self._pan_start_pos: QPointF | None = None
+        self._pan_button: Qt.MouseButton | None = None
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
     def set_image(self, pixmap: QPixmap):
-        """Loads a new base image, discarding annotations from the previous one."""
+        """Loads a new base image, discarding annotations and resetting zoom."""
         self.pixmap_source = pixmap
         self.clear_annotations()
+        self.reset_view()
 
     def reset_image(self):
-        """Clears the image and its annotations, e.g. after a failed load."""
+        """Clears the image, annotations, and zoom, e.g. after a failed load."""
         self.pixmap_source = None
         self.clear_annotations()
+        self.reset_view()
+
+    def reset_view(self):
+        """Resets zoom and pan back to fit-to-window centering."""
+        self._zoom_factor = 1.0
+        self._pan_offset = QPointF(0, 0)
+        self._is_panning = False
+        self._pan_start_pos = None
+        self._pan_button = None
+        self._update_cursor()
+        self.update()
+
+    def zoom_at(self, cursor_pos: QPointF, factor: float):
+        """Zooms by factor keeping the image point under cursor_pos stationary."""
+        if not self.pixmap_source or self.pixmap_source.isNull():
+            return
+        img_w = self.pixmap_source.width()
+        img_h = self.pixmap_source.height()
+        if img_w <= 0 or img_h <= 0 or self.width() <= 0 or self.height() <= 0:
+            return
+
+        fit_scale = min(self.width() / img_w, self.height() / img_h)
+        new_zoom = max(0.05, min(self._zoom_factor * factor, 50.0))
+        if abs(new_zoom - self._zoom_factor) < 1e-6:
+            return
+
+        old_scale = fit_scale * self._zoom_factor
+        new_scale = fit_scale * new_zoom
+
+        old_cx = (self.width() - img_w * old_scale) / 2
+        old_cy = (self.height() - img_h * old_scale) / 2
+        old_offset = QPointF(old_cx + self._pan_offset.x(), old_cy + self._pan_offset.y())
+
+        img_pt_x = (cursor_pos.x() - old_offset.x()) / old_scale
+        img_pt_y = (cursor_pos.y() - old_offset.y()) / old_scale
+
+        new_offset_x = cursor_pos.x() - img_pt_x * new_scale
+        new_offset_y = cursor_pos.y() - img_pt_y * new_scale
+
+        new_cx = (self.width() - img_w * new_scale) / 2
+        new_cy = (self.height() - img_h * new_scale) / 2
+
+        self._zoom_factor = new_zoom
+        self._pan_offset = QPointF(new_offset_x - new_cx, new_offset_y - new_cy)
+        self.update()
+
+    def zoom_in(self):
+        center = QPointF(self.width() / 2, self.height() / 2)
+        self.zoom_at(center, 1.25)
+
+    def zoom_out(self):
+        center = QPointF(self.width() / 2, self.height() / 2)
+        self.zoom_at(center, 0.8)
+
+    def _update_cursor(self):
+        if self._is_panning:
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        elif self.drawing_enabled:
+            self.setCursor(Qt.CursorShape.CrossCursor)
+        elif self.pixmap_source and not self.pixmap_source.isNull():
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
 
     def set_drawing_enabled(self, enabled: bool):
         self.drawing_enabled = enabled
-        self.setCursor(
-            Qt.CursorShape.CrossCursor if enabled else Qt.CursorShape.ArrowCursor
-        )
+        self._update_cursor()
 
     def set_pen_color(self, color: QColor):
         self.pen_color = QColor(color)
@@ -154,10 +223,22 @@ class DrawableImageLabel(QLabel):
         return QPointF(x, y)
 
     # ------------------------------------------------------------------
-    # Mouse events (drawing)
+    # Mouse and Wheel events (drawing, zooming, panning)
     # ------------------------------------------------------------------
     def mousePressEvent(self, event):
         self.setFocus(Qt.FocusReason.MouseFocusReason)
+        # Pan triggers: MiddleButton, RightButton, or LeftButton when drawing is disabled
+        can_pan = (
+            event.button() in (Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton)
+            or (event.button() == Qt.MouseButton.LeftButton and not self.drawing_enabled)
+        )
+        if can_pan and self.pixmap_source and not self.pixmap_source.isNull():
+            self._is_panning = True
+            self._pan_button = event.button()
+            self._pan_start_pos = event.position()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            return
+
         if self.drawing_enabled and event.button() == Qt.MouseButton.LeftButton:
             point = self._widget_to_image_point(event.position())
             if point is not None:
@@ -171,6 +252,13 @@ class DrawableImageLabel(QLabel):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if self._is_panning and self._pan_start_pos is not None:
+            delta = event.position() - self._pan_start_pos
+            self._pan_offset += delta
+            self._pan_start_pos = event.position()
+            self.update()
+            return
+
         if self._current_stroke is not None:
             point = self._widget_to_image_point(event.position())
             if point is not None:
@@ -180,6 +268,13 @@ class DrawableImageLabel(QLabel):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if self._is_panning and event.button() == self._pan_button:
+            self._is_panning = False
+            self._pan_start_pos = None
+            self._pan_button = None
+            self._update_cursor()
+            return
+
         if (
             self._current_stroke is not None
             and event.button() == Qt.MouseButton.LeftButton
@@ -193,6 +288,31 @@ class DrawableImageLabel(QLabel):
             return
         super().mouseReleaseEvent(event)
 
+    def mouseDoubleClickEvent(self, event):
+        # Double clicking resets zoom and pan to fit view
+        if (
+            event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.MiddleButton)
+            and not (self.drawing_enabled and event.button() == Qt.MouseButton.LeftButton)
+        ):
+            self.reset_view()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def wheelEvent(self, event):
+        if not self.pixmap_source or self.pixmap_source.isNull():
+            super().wheelEvent(event)
+            return
+
+        delta_y = event.angleDelta().y()
+        if delta_y == 0:
+            super().wheelEvent(event)
+            return
+
+        num_steps = (delta_y / 8) / 15
+        factor = 1.15 ** num_steps
+        self.zoom_at(event.position(), factor)
+        event.accept()
+
     # ------------------------------------------------------------------
     # Painting
     # ------------------------------------------------------------------
@@ -201,25 +321,31 @@ class DrawableImageLabel(QLabel):
         if not self.pixmap_source or self.pixmap_source.isNull():
             return
 
-        scaled_size = self.pixmap_source.size()
-        scaled_size.scale(self.size(), Qt.AspectRatioMode.KeepAspectRatio)
+        img_w = self.pixmap_source.width()
+        img_h = self.pixmap_source.height()
+        if img_w <= 0 or img_h <= 0 or self.width() <= 0 or self.height() <= 0:
+            return
 
-        x = (self.width() - scaled_size.width()) // 2
-        y = (self.height() - scaled_size.height()) // 2
+        fit_scale = min(self.width() / img_w, self.height() / img_h)
+        scale = fit_scale * self._zoom_factor
+        self._draw_scale = scale
 
-        # Recorded every paint so _widget_to_image_point stays correct across resizes.
-        self._draw_scale = scaled_size.width() / self.pixmap_source.width()
-        self._draw_offset = QPointF(x, y)
+        cx = (self.width() - img_w * scale) / 2
+        cy = (self.height() - img_h * scale) / 2
+        self._draw_offset = QPointF(cx + self._pan_offset.x(), cy + self._pan_offset.y())
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
-        scaled_pixmap = self.pixmap_source.scaled(
-            scaled_size,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
+        target_rect = QRectF(
+            self._draw_offset.x(),
+            self._draw_offset.y(),
+            img_w * scale,
+            img_h * scale,
         )
-        painter.drawPixmap(x, y, scaled_pixmap)
+        source_rect = QRectF(0.0, 0.0, float(img_w), float(img_h))
+        painter.drawPixmap(target_rect, self.pixmap_source, source_rect)
 
         # Committed strokes, plus the in-progress one so it's visible while drawn.
         strokes_to_paint = self.strokes + (

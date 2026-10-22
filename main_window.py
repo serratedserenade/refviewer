@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QRadioButton,
     QButtonGroup,
+    QMenu,
 )
 from PyQt6.QtGui import (
     QPixmap,
@@ -98,7 +99,6 @@ class MainWindow(QWidget):
         self.right_sidebar: QFrame = None
 
         self._canvas_loaders = []
-        self._setup_shortcuts()
 
         # See eventFilter(): the annotation shortcuts have to be caught
         # application-wide to survive Qt's shortcut-override mechanism.
@@ -115,6 +115,7 @@ class MainWindow(QWidget):
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
         self._build_ui()
+        self._setup_shortcuts()
         self._setup_timer()
 
         # Deferred so the window paints before the folder scan blocks.
@@ -182,7 +183,7 @@ class MainWindow(QWidget):
         # Indices are kept because selecting a folder in Files jumps to Images.
         self.files_tab_index = tabs.addTab(self._create_files_tab(), "Files")
         self.images_tab_index = tabs.addTab(self._create_images_tab(), "Images")
-        tabs.addTab(self._create_history_tab(), "History")
+        self.history_tab_index = tabs.addTab(self._create_history_tab(), "History")
 
         return tabs
 
@@ -290,6 +291,10 @@ class MainWindow(QWidget):
             QListWidget.SelectionMode.ExtendedSelection
         )
         self.file_list_widget.itemSelectionChanged.connect(self.on_selection_changed)
+        self.file_list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.file_list_widget.customContextMenuRequested.connect(
+            self._show_file_list_context_menu
+        )
 
         layout.addWidget(self.file_list_widget)
 
@@ -341,6 +346,10 @@ class MainWindow(QWidget):
         self.history_list_widget.setDragDropMode(QAbstractItemView.DragDropMode.NoDragDrop)
         self.history_list_widget.setAcceptDrops(False)
         self.history_list_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.history_list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.history_list_widget.customContextMenuRequested.connect(
+            self._show_history_context_menu
+        )
 
         # Deliberately a separate handler from on_file_item_changed, so browsing
         # History never appends to History.
@@ -848,6 +857,150 @@ class MainWindow(QWidget):
         """Recomputes tag assignment state, which depends on the whole selection."""
         self.refresh_global_tags()
 
+    # ========================== IMAGE DELETION ==========================
+
+    def get_target_delete_paths(self) -> list[str]:
+        """Determines which filepaths to delete based on current selection or active view."""
+        selected = self.get_selected_paths()
+        if selected:
+            return selected
+
+        # If viewing History and an item is selected there
+        if self.left_sidebar and self.left_sidebar.currentIndex() == self.history_tab_index:
+            if current := self.history_list_widget.currentItem():
+                p = current.data(Qt.ItemDataRole.UserRole)
+                if p and os.path.exists(p):
+                    return [p]
+
+        if self.active_image_path and os.path.exists(self.active_image_path):
+            return [self.active_image_path]
+
+        return []
+
+    def delete_selected_images(self, confirm: bool = True):
+        """Deletes target image files from disk, database, and UI.
+
+        If `confirm` is True, shows a warning prompt before deleting; otherwise
+        deletes immediately (for Shift+Delete).
+        """
+        targets = self.get_target_delete_paths()
+        if not targets:
+            return
+
+        if confirm:
+            if len(targets) == 1:
+                msg = f"Are you sure you want to delete '{os.path.basename(targets[0])}'?"
+            else:
+                msg = f"Are you sure you want to delete {len(targets)} selected images?"
+            reply = QMessageBox.warning(
+                self,
+                "Confirm Delete",
+                msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        deleted_paths = set()
+        failed = []
+        for path in targets:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                deleted_paths.add(path)
+            except Exception as e:
+                failed.append((path, str(e)))
+
+        if failed:
+            err_msg = "\n".join(f"{os.path.basename(p)}: {err}" for p, err in failed[:5])
+            if len(failed) > 5:
+                err_msg += f"\n...and {len(failed) - 5} more."
+            QMessageBox.critical(
+                self, "Error Deleting Files", f"Could not delete some files:\n{err_msg}"
+            )
+
+        if not deleted_paths:
+            return
+
+        # 1. Clean up database records
+        database.remove_images(list(deleted_paths))
+
+        # 2. Update scanned_files list
+        self.scanned_files = [p for p in self.scanned_files if p not in deleted_paths]
+
+        # 3. Clean up history_list_widget
+        self.history_list_widget.blockSignals(True)
+        for i in reversed(range(self.history_list_widget.count())):
+            item = self.history_list_widget.item(i)
+            if item and item.data(Qt.ItemDataRole.UserRole) in deleted_paths:
+                self.history_list_widget.takeItem(i)
+        self.history_list_widget.blockSignals(False)
+
+        # 4. Remove from file_list_widget and pick next image if active was deleted
+        active_was_deleted = self.active_image_path in deleted_paths
+        next_row_index = self.file_list_widget.currentRow()
+
+        self.file_list_widget.blockSignals(True)
+        for i in reversed(range(self.file_list_widget.count())):
+            item = self.file_list_widget.item(i)
+            if item and item.data(Qt.ItemDataRole.UserRole) in deleted_paths:
+                self.file_list_widget.takeItem(i)
+        self.file_list_widget.blockSignals(False)
+
+        if active_was_deleted:
+            count = self.file_list_widget.count()
+            if count > 0:
+                new_row = max(0, min(next_row_index, count - 1))
+                self.file_list_widget.setCurrentRow(new_row)
+                new_item = self.file_list_widget.item(new_row)
+                if new_item:
+                    path = new_item.data(Qt.ItemDataRole.UserRole)
+                    self._activate_image_path(path)
+                    self._add_to_history(path, new_item.icon())
+            else:
+                self.active_image_path = None
+                self.image_viewer.reset_image()
+                self.image_viewer.setText("No images to display.")
+                self.current_image_path_label.setText("")
+                self.clear_bubbles()
+                self.stop_timer()
+
+        # 5. Refresh tags in right sidebar
+        self.refresh_global_tags()
+
+    def _show_file_list_context_menu(self, pos):
+        item = self.file_list_widget.itemAt(pos)
+        if not item and not self.get_selected_paths():
+            return
+        menu = QMenu(self)
+        menu.setStyleSheet(STYLES["menu"])
+        del_action = menu.addAction("Delete")
+        del_action.setShortcut(QKeySequence("Delete"))
+        del_action.triggered.connect(lambda: self.delete_selected_images(confirm=True))
+
+        perm_action = menu.addAction("Delete (no prompt)")
+        perm_action.setShortcut(QKeySequence("Shift+Delete"))
+        perm_action.triggered.connect(lambda: self.delete_selected_images(confirm=False))
+
+        menu.exec(self.file_list_widget.mapToGlobal(pos))
+
+    def _show_history_context_menu(self, pos):
+        item = self.history_list_widget.itemAt(pos)
+        if not item:
+            return
+        menu = QMenu(self)
+        menu.setStyleSheet(STYLES["menu"])
+        del_action = menu.addAction("Delete")
+        del_action.setShortcut(QKeySequence("Delete"))
+        del_action.triggered.connect(lambda: self.delete_selected_images(confirm=True))
+
+        perm_action = menu.addAction("Delete (no prompt)")
+        perm_action.setShortcut(QKeySequence("Shift+Delete"))
+        perm_action.triggered.connect(lambda: self.delete_selected_images(confirm=False))
+
+        menu.exec(self.history_list_widget.mapToGlobal(pos))
+
     # ========================== ANNOTATIONS ==========================
     # Thin forwarding layer between the toolbar's signals and the canvas.
     # See components/drawing_canvas.py for the annotation model itself.
@@ -1225,6 +1378,22 @@ class MainWindow(QWidget):
         shortcut_draw.setContext(Qt.ShortcutContext.WindowShortcut)
         shortcut_draw.activated.connect(self._toggle_draw_shortcut)
 
+        shortcut_zoom_in = QShortcut(QKeySequence("Ctrl+="), self)
+        shortcut_zoom_in.setContext(Qt.ShortcutContext.WindowShortcut)
+        shortcut_zoom_in.activated.connect(self.image_viewer.zoom_in)
+
+        shortcut_zoom_in2 = QShortcut(QKeySequence("Ctrl++"), self)
+        shortcut_zoom_in2.setContext(Qt.ShortcutContext.WindowShortcut)
+        shortcut_zoom_in2.activated.connect(self.image_viewer.zoom_in)
+
+        shortcut_zoom_out = QShortcut(QKeySequence("Ctrl+-"), self)
+        shortcut_zoom_out.setContext(Qt.ShortcutContext.WindowShortcut)
+        shortcut_zoom_out.activated.connect(self.image_viewer.zoom_out)
+
+        shortcut_reset_zoom = QShortcut(QKeySequence("Ctrl+0"), self)
+        shortcut_reset_zoom.setContext(Qt.ShortcutContext.WindowShortcut)
+        shortcut_reset_zoom.activated.connect(self.image_viewer.reset_view)
+
     def _toggle_draw_shortcut(self):
         """Routes Ctrl+D through the toolbar button so its state stays in sync."""
         self.drawing_toolbar.draw_btn.toggle()
@@ -1253,17 +1422,20 @@ class MainWindow(QWidget):
                         self._on_undo_annotation()
                     return True
 
-                # Bare Delete only, so combinations stay available to Qt.
-                no_extra_modifiers = not (
-                    modifiers
-                    & (
+                if event.key() == Qt.Key.Key_Delete:
+                    # Shift+Delete: delete without confirmation prompt
+                    if modifiers & Qt.KeyboardModifier.ShiftModifier:
+                        self.delete_selected_images(confirm=False)
+                        return True
+                    # Ctrl+Delete or Alt+Delete: clear pen annotations
+                    if modifiers & (
                         Qt.KeyboardModifier.ControlModifier
-                        | Qt.KeyboardModifier.ShiftModifier
                         | Qt.KeyboardModifier.AltModifier
-                    )
-                )
-                if event.key() == Qt.Key.Key_Delete and no_extra_modifiers:
-                    self._on_clear_annotations()
+                    ):
+                        self._on_clear_annotations()
+                        return True
+                    # Bare Delete: delete with warning prompt
+                    self.delete_selected_images(confirm=True)
                     return True
 
         return super().eventFilter(obj, event)
