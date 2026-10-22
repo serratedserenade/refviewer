@@ -1443,16 +1443,34 @@ class MainWindow(QWidget):
     # genuine text fields so their native editing keys keep working.
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.KeyPress:
+            if not isinstance(obj, QWidget):
+                return super().eventFilter(obj, event)
+
             modifiers = event.modifiers()
+            focused = QApplication.focusWidget()
+
             # A spinbox's internal QLineEdit doesn't count as a text field here.
-            is_real_text_field = isinstance(obj, QLineEdit) and not isinstance(
-                obj.parent(), QAbstractSpinBox
+            is_real_text_field = (
+                isinstance(obj, QLineEdit) and not isinstance(obj.parent(), QAbstractSpinBox)
+            ) or (
+                isinstance(focused, QLineEdit) and not isinstance(focused.parent(), QAbstractSpinBox)
             )
-            is_tree = hasattr(self, "folder_tree") and (
-                obj is self.folder_tree or self.folder_tree.isAncestorOf(obj)
+            tree = getattr(self, "folder_tree", None)
+            is_tree = tree is not None and (
+                obj is tree
+                or tree.isAncestorOf(obj)
+                or (isinstance(focused, QWidget) and (focused is tree or tree.isAncestorOf(focused)))
             )
-            is_spinbox_or_slider = isinstance(obj, (QAbstractSpinBox, QSlider)) or isinstance(
-                getattr(obj, "parent", lambda: None)(), QAbstractSpinBox
+            is_spinbox_or_slider = (
+                isinstance(obj, (QAbstractSpinBox, QSlider))
+                or isinstance(obj.parent(), QAbstractSpinBox)
+                or (
+                    isinstance(focused, QWidget)
+                    and (
+                        isinstance(focused, (QAbstractSpinBox, QSlider))
+                        or isinstance(focused.parent(), QAbstractSpinBox)
+                    )
+                )
             )
 
             if not is_real_text_field:
